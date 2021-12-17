@@ -1,0 +1,65 @@
+一、处理交易类型：
+输入：存放一篇新闻中所有以句为单位的基础结构体的list
+[
+    {
+        'sent': 'Element Finance完成440万美元融资a16z和Placeholder领投',
+        'entities_sent': '<关联方>完成<金额><交易类型><关联方>和<关联方>领投',
+        'deal_types': {
+            '融资': (11, 17)
+        },
+        'match_result': [{
+            'struct': {
+                'financing_company': {},
+                'deal_size': '440万美元',
+                'deal_type': '融资'
+            },
+            'from_rule': 'Rule1'
+        }]
+    }
+]
+
+1. 以篇为单位将所有交易类型划分([交易类型] -> [实际交易类型] + [指代交易类型]):
+    (1) 用正则匹配指代交易类型
+    (2) 剩余为实际交易类型
+
+2. 融合实际交易类型中相同的部分(如 "B+轮战略融资" 和 "B+轮投资")：
+    (1) 先识别这一情况，有字母的匹配字母，没有的视情况而定
+    (2) 再筛选或融合为一个，主要选字符串长的，
+
+3. 替换指代交易类型：
+    (1) 若实际交易类型只有一个就直接替换
+    (2) 若有多个则需筛选，筛选规则视情况而定
+
+4. 最后相同交易类型的基础结构体放在一个容器中待下一步处理
+
+输出：一个或多个存放基础结构体的list，某个list中的基础结构体交易类型相同，且所有交易类型不是指代交易类型
+
+二、融合
+原则：同一交易类型的融资方一定相同
+借助中间数据结构去重和找错
+{
+    'deal_type': '',
+    'financing_company_names': set({'full_name1', 'primary_name1', 'english_name1'}), 
+    'investor_names': set({'full_name1', 'primary_name1', 'english_name1'}),
+    'financing_company': {
+        'full_name': '',
+        'primary_name': '',
+        'english_name': ''
+    },
+    'investors': [
+        {
+            'full_name': '',
+            'primary_name': '',
+            'english_name': '',
+            'is_leading_investor':True
+        },
+        ...
+    ],
+    'finacial_advisers': set({}),
+    'deal_size': set({}),
+    'business_profile': set({}),
+    'pre_money_valuation': set({}),
+    'post_money_valuation': set({}),
+    'cumulative_amount_of_financing': set({})
+}
+
