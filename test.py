@@ -6,7 +6,6 @@ import csv
 import xlsxwriter
 import requests
 
-
 class MyJSONEncoder(json.JSONEncoder):
 
     def iterencode(self, o, _one_shot=False):
@@ -38,60 +37,24 @@ def get_ner_predict(sent):
     res = json.loads(r.text)
     return res
 
-
-def test():
-    with open("./output/template.txt", 'r', encoding="utf-8") as inf, open("./output/test_result.txt", 'w+', encoding="utf-8") as outf:
-        flag = False
-        lines = []
-        for line in inf:
-            if line.startswith('--'):
-                flag = not flag
-                continue
-            if flag:
-                lines.append(line)
-            else:
-                l = len(lines)
-                for i, ln in enumerate(lines[l//2+1:]):
-                    obj = run.ede(lines[i])
-                    if not obj:
-                        continue
-                    outf.write(lines[i])
-                    entities_sent = obj["entities_sent"]
-                    match_result = obj["match_result"]
-                    labels_used = obj["labels_used"]
-                    labels_unused = obj["labels_unused"]
-                    labels_used_count = obj["labels_used_count"]
-                    labels_unused_count = obj["labels_unused_count"]
-                    outf.write("entities_sent: " + entities_sent+'\n')
-                    outf.write("structs: \n")
-                    outf.write(json.dumps(
-                        match_result, ensure_ascii=False, indent=4))
-                    outf.write('\n')
-                    outf.write("labels_used: [\n")
-                    for lu in labels_used:
-                        outf.write('\t')
-                        outf.write(str(lu) + '\n')
-                    outf.write("]\n")
-
-                    outf.write("labels_unused: [\n")
-                    for lu in labels_unused:
-                        outf.write('\t')
-                        outf.write(str(lu) + '\n')
-                    outf.write("]\n")
-
-                    outf.write("labels_used_count: " +
-                               str(labels_used_count) + '\n')
-                    outf.write("labels_unused_count: " +
-                               str(labels_unused_count) + '\n')
-                    outf.write("\n\n")
-                lines.clear()
-
 def test1():
     with open("./input/sample.csv", 'r') as inf:
         wb = xlsxwriter.Workbook("./output/test_result.xlsx")
         sh1 = wb.add_worksheet()
         sh2 = wb.add_worksheet()
-        str_format = wb.add_format({'align': 'center','valign': 'vcenter'})
+        sh1.set_column(0, 0, 8)
+        sh1.set_column(1, 1, 25)
+        sh1.set_column(2, 3, 35)
+        sh1.set_column(4, 4, 50)
+        sh1.set_column(5, 5, 35)
+        sh2.set_column(0, 0, 8)
+        sh2.set_column(1, 1, 25)
+        sh2.set_column(2, 2, 40)
+        sh2.set_column(3, 3, 35)
+        sh2.set_column(4, 4, 10)
+        sh2.set_column(5, 5, 50)
+        sh2.set_column(6, 6, 8)
+        str_format = wb.add_format({'align': 'center','valign': 'vcenter', 'text_wrap': True})
         reader = csv.reader(inf)
         next(reader)
         sh1.write_row(0,0,['news_id','title','valid_sentence','ner_entities','struct','unused'], str_format)
@@ -148,7 +111,146 @@ def test1():
         print("unuse_labels_count: ", unuse_labels_count)
         wb.close()
 
+def refine_news():
+    with open("./input/纯融资_news.csv", 'r+') as inf, open("./input/news.csv", 'w+') as outf:
+        reader = csv.reader(inf)
+        writer = csv.writer(outf)
+        writer.writerow(["title", "content"])
+        next(reader)
+        titles = set({})
+        for row in reader:
+            title = row[0]
+            content = row[1]
+            if title not in titles:
+                titles.add(title)
+                writer.writerow([title, content])
+        pass
+    pass
+
+def get_deal_type():
+    with open("./output/valid_sentences.csv", 'r+') as inf:
+        refer_dt_reobj = re.compile(r"(?:(?:Pre-|pre-)?[A-H]\d?|天使|种子|新一|上一?|本|此|该|两|首)(?:\+)?(?:轮|次)(?:融资|投资)?", re.I)
+        validate_deal_type_reobj = re.compile(r"(((Pre-)?[A-H]\d?|天使|种子|战略|IPO|新一|上一?|本|此|该|两|首)(\++|＋+|plus)?(系列)?(轮|次)(融资|投资|投融资)?|(天使|种子|战略|风险|IPO|股权)(融资|投资|投融资)|融资|投资)", re.I)
+        wb = xlsxwriter.Workbook("./output/deal_type1.xlsx")
+        ws = wb.add_worksheet()
+        ws.set_row(0, 30)
+        ws.set_column(0, 0, 40)
+        ws.set_column(1, 1, 90)
+        ws.set_column(2, 2, 20)
+        ws.set_column(3, 3, 20)
+        str_format = wb.add_format({'align': 'center','valign': 'vcenter','text_wrap': True})
+        red_format = wb.add_format({'color': 'red'})
+        purple_format = wb.add_format({'color': 'purple'})
+        ws.write_row(0,0,["title", "valid_sentences", "deal_types", "refer_deal_type"], str_format)
+        reader = csv.reader(inf)
+        next(reader)
+        rowidx = 1
+        separator = "\n--------\n"
+        for row in reader:
+            
+            # if rowidx > 10:
+            #     break
+            
+            title = row[0]
+            valid_sentences = row[1]
+            vs = valid_sentences.split("\n\n")
+            sent_dt = {}
+            sent_dt_set = {}
+            dt_set = set({})
+            refer_dt_set = set({})
+            for s in vs:
+                s = run.normalize_sentence(s)
+                resp = get_ner_predict(s)
+                if resp["error_message"] or not "labels_indexes" in resp["response"]:
+                    print(resp["error_message"], ": ", s)
+                    continue
+                labels_indexes = resp["response"]["labels_indexes"]
+                for li in labels_indexes:
+                    
+                    dt = s[li[0]:li[1]]
+                    if li[2] == "交易类型" and validate_deal_type_reobj.search(dt):
+                        dt_set.add(li[0])
+                        dt_set.add(li[1])
+                        if s not in sent_dt_set:
+                            sent_dt_set[s] = {dt}
+                        else:
+                            sent_dt_set[s].add(dt)
+                        if s not in sent_dt:
+                            sent_dt[s] = [(li[0], li[1], True)]
+                        else:
+                            sent_dt[s].append((li[0], li[1], True))
+            if len(dt_set) <= 2:
+                continue
+            
+            for s, dts in sent_dt_set.items():
+                if len(dts) != 1:
+                    ms = refer_dt_reobj.finditer(s)
+                    for m in ms:
+                        rdt = m.span()
+                        if rdt[0] not in dt_set and rdt[1] not in dt_set:
+                            refer_dt_set.add(s[rdt[0]:rdt[1]])
+                            if s not in sent_dt:
+                                sent_dt[s] = [m.span() + (False,)]
+                            else:
+                                sent_dt[s].append(m.span()+ (False,))
+            dt_set.clear()
+            formated_strs = []
+            for s, dt_idxs in sent_dt.items():
+                if len(dt_idxs) <= 1:
+                    continue
+                if len(formated_strs) != 0:
+                    formated_strs.append(separator)
+                dt_idxs.sort()
+                start = 0
+                for dti in dt_idxs:
+                    color = purple_format
+                    if dti[2]:
+                        dt_set.add(s[dti[0]:dti[1]])
+                        color = red_format
+                    tmp = s[start:dti[0]]
+                    if tmp != "":
+                        formated_strs.append(tmp)
+                    formated_strs.append(color)
+                    formated_strs.append(s[dti[0]:dti[1]])
+                    start = dti[1]
+                tmp = s[start:]
+                if tmp != "":
+                    formated_strs.append(tmp)
+            if len(formated_strs) == 0:
+                continue
+            ws.write_string(rowidx, 0, title, str_format)
+            formated_strs.append(str_format)
+            ws.write_rich_string(rowidx, 1, *formated_strs)
+            ws.write_string(rowidx, 2, "\n".join(dt_set), str_format)
+            ws.write_string(rowidx, 3, "\n".join(refer_dt_set), str_format)
+            rowidx += 1
+        wb.close()
+    
+    
+o = re.compile(r"")
+o.sub()
+    
+def get_valid_content(title:str, content:str):
+    req = json.dumps({"content": content, "snapshot": {"title": title}})
+    resp = requests.post("http://192.168.88.203:5689/get_valid_content", req)
+    res = json.loads(resp.text)
+    if res["error_message"] == "":
+        res = res["response"]["valid_content"]
+    else:
+        res = None
+    return res
+
+def test_get_valid_content():
+    title = "智达万应获得1000万元天使轮融资"
+    content = "智达万应是一家专注于“大数据+交通”的企业，在国内首创“CPR交通大数据综合应用平台”，为行业用户提供整体解决方案以及运营模式，致力于让道路更畅通，确保公众出行安全。日前获得天使轮1000万元融资，正进行工商信息变更。该公司创始人王博在受访时称，在获得本轮融资后，将主要用于解决公司流动资金及智慧交通“黑科技”硬件产品研发。年内将根据公司战略发展需要，开启“天使轮+”融资，希望引入新的战略股东，力争用3-5年时间把智达万应培育称四川乃至中国西部智慧交通领域的领军型科创企业。"
+    res = get_valid_content(title, content)
+    if res:
+        for r in res:
+            for s in r["sentences"]:
+                print(s)
 
 if __name__ == "__main__":
     # test()
-    test1()
+    # test1()
+    # refine_news()
+    get_deal_type()

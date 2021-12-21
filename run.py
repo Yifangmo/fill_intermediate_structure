@@ -109,7 +109,8 @@ class Rule1(object):
 
 class Rule2(object):
     def __init__(self):
-        self.pattern = r"(?:((?:本|该|此)轮(?:战略)?(?:融资|投资)|<交易类型>)?由|由|^|(?<=，|>)|(?<=[^>]、))((?:(?:<属性名词>的?)?(?:<关联方>)(?:、|和|以?及)?)+)等?(?:机构|基金|(<属性名词>))?(?:联合|重仓加码|共同)?领投"
+        # self.pattern = r"(?:((?:本|该|此)轮(?:战略)?(?:融资|投资)|<交易类型>)?由|由|^|(?<=，|>)|(?<=[^>]、))((?:(?:<属性名词>的?)?(?:<关联方>)(?:、|和|以?及)?)+)等?(?:机构|基金|(<属性名词>))?(?:联合|重仓加码|共同|独家)?领投"
+        self.pattern = r"((?:本|该|此)轮(?:战略)?(?:融资|投资)|<交易类型>)?[^，<>]*((?:(?:<属性名词>的?)?(?:<关联方>)(?:、|和|以?及)?)+)等?(?:机构|基金|(<属性名词>))?(?:联合|重仓加码|共同|独家)?领投"
         self.reobj = re.compile(self.pattern)
         self.deal_type_group_id = 1
         self.investors_group_id = 2
@@ -556,7 +557,7 @@ def get_field_values(sent: str, entities_index_dict: dict, spans: list):
 def get_classified_alias(alias: set):
     english_names = {n for n in alias if re.fullmatch(
         r"([A-Za-z\d]{3,}(?:\s[A-Za-z\d]+)*)", n)}
-    full_names = {n for n in alias if n.endswith(('公司','集团'))}
+    full_names = {n for n in alias if n.endswith(('公司','集团','基金'))}
     primary_names = alias - english_names - full_names
     if len(primary_names) == 0:
         primary_names = full_names
@@ -589,7 +590,42 @@ class EntitiesDictExtrator(object):
     def __init__(self, funcs: list):
         self.validate_deal_type_reobj = re.compile(r"(((Pre-)?[A-H]\d?|天使|种子|战略|IPO|新一|上一?|本|此|该|两|首)(\++|＋+|plus)?(系列)?(轮|次)(融资|投资|投融资)?|(天使|种子|战略|风险|IPO|股权)(融资|投资|投融资)|融资|投资)", re.I)
         self.validate_attr_noun_reobj = re.compile(r'(?:总|整体|累计)?融资(?:总?金?额|规模|累计金?额)|投前估值|后估值|估值|投资方|投资人|投资者|投资机构|领投方|领投机构|财务顾问|融资顾问', re.I)
+        self.repl_deal_type_reobj = re.compile(r'(轮|次|笔|轮战略)?(投资|融资)|投融资', re.I)
         self.func_a = funcs
+        
+    def get_specific_deal_type(self, sent: str, labels_indexes):
+        repl_dt_set = {}
+        real_deal_type = {}
+        pre_dt = None
+        for i, li in enumerate(labels_indexes):
+            label_content = sent[li[0]:li[1]]
+            if li[2] == "交易类型" and not self.validate_deal_type_reobj.search(label_content):
+                repl_dt = self.repl_deal_type_reobj.sub("", label_content)
+                pre_comma_pos = sent.rfind('，', None, li[0])
+                post_comma_pos = sent.find('，', li[1], None)
+                if repl_dt != "":
+                    if label_content.endswith("投资") and not re.search(r"获|完成", sent, pre_comma_pos, li[0]) \
+                        or re.search(r"第|两|三|四|五|又一|(?<![a-zA-Z])\d", repl_dt):
+                        continue
+                    else:
+                        if repl_dt in repl_dt_set:
+                            pre = repl_dt_set[repl_dt]
+                            real_dt = pre if len(pre) > len(label_content) else label_content
+                            real_deal_type[pre][2] = real_dt
+                            real_deal_type[label_content] = (pre_comma_pos, post_comma_pos, real_dt)
+                        else:
+                            repl_dt_set[repl_dt] = label_content
+                            real_deal_type[label_content] = (pre_comma_pos, post_comma_pos, label_content)
+                elif re.match(r'融资|投资', label_content) and i > 1 and \
+                labels_indexes[i-1][2] == "金额" and labels_indexes[i-2][2] == "交易类型":
+                    if not real_deal_type[repl_dt_set[pre_dt]].endswith(('投资', '融资')):
+                        real_deal_type[repl_dt_set[pre_dt]][2] += label_content
+                pre_dt = repl_dt
+        if len(repl_dt_set) == 1:
+            for k, v in real_deal_type.items():
+                v[0] = 0
+                v[1] = len(sent)
+        pass
 
     def get_sentence_common_info(self, sentence_struct_info: dict, entities_index_dict: dict):
         sent = sentence_struct_info["sent"]
@@ -706,7 +742,7 @@ class EntitiesDictExtrator(object):
             total_labels_used |= mr["labels_used"]
             # 若无deal_type，则将句子共用其中一个的给它
             if len(sentence_struct_info["deal_types"]) > 0:
-                if not "deal_type" in mr_struct or mr_struct["deal_type"] not in sentence_struct_info["deal_types"]:
+                if  "deal_type" not in mr_struct or mr_struct["deal_type"] not in sentence_struct_info["deal_types"]:
                     # 待解决
                     for k, v in sentence_struct_info["deal_types"].items():
                         mr_struct["deal_type"] = k
@@ -797,6 +833,7 @@ class EntitiesDictExtrator(object):
         sentence_struct_info["match_result"] = match_result
         
         print("match_result： ", sentence_struct_info["match_result"])
+        print()
 
         self.adjust_field(sentence_struct_info)
         return sentence_struct_info
@@ -834,11 +871,14 @@ if __name__ == "__main__":
     # obj = call("8月25日，极客网了解到，劢微机器人获得数千万人民币A+轮融资，信天创投领投，plug and play、梅花创投参投。")
     # obj = call("据悉，乐播投屏此前曾于2015年获得赛马资本的天使轮融资，2016年获得金沙江联合资本的A轮融资，2017年11月获前海母基金，暴龙资本领投，博将资本、易合资本联合参投的A+轮融资。")
     # obj = call("业内人士分析，在目前市场偏于谨慎的投资环境下，金智维逆势完成融资，再获逾2亿元资本加持，证明其强大的自主研发能力、以用户为本的产品理念、金融行业的高渗透率以及可持续发展的商业模式，得到广泛的验证和认可。")
-    obj = call("Element Finance 完成 440 万美元融资 a16z 和 Placeholder 领投")
     # obj = call("去年5月，该公司在由Saama Capital领投的A轮融资中筹集了590万美元。")
     # obj = call("华米科技240万美元领投neuro42 A轮融资")
     # obj = call("投资界7月28日消息，中国本土原浆啤酒品牌泰山啤酒完成新一轮融资，由中信系投资平台信金资本独家战略加持。")
     # obj = call("日前网通社获悉，威马汽车控股有限公司宣布，威马汽车预计将获得超过3亿美元的D1轮融资，本轮融资由电讯盈科有限公司（“电讯盈科”）和信德集团有限公司（“信德集团”）领投，参投方包括广发信德投资管理有限公司旗下美元投资机构等。")
     # obj = call("据威马汽车官方介绍，本次获得的D1轮融资贷款，将用于威马汽车无人驾驶技术与其他智能化技术和产品研发，另外资金还将用于销售及服务渠道拓展等，另外锦沄资本和光源资本则以财务顾问身份参与本轮融资。")
-    # s = json.dumps(obj, ensure_ascii=False)
+
+    # obj = call("根据CVSource投中数据，煲仔皇曾于2015年获0331创投百万级天使轮融资，2016年获真格基金、老鹰基金、星瀚资本千万级PreA轮融资，2017年获弘毅投资旗下百福控股数千万A轮融资。")
+    obj = call("2021开年，B1轮融资发布不过4个月，奇点云再迎喜讯：于近日完成8000万元B2轮融资，字节跳动独家领投，老股东IDG资本跟投。")
+    obj = call("36氪获悉，饭乎于近期连续完成两轮融资，包括昕先资本（洽洽家族基金）投资的千万元级天使轮融资，以及联想之星领投和拙朴投资跟投的数千万元级A轮融资。")
+
     print(obj)

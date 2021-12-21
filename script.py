@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+from os import write
 import openpyxl
 import csv
 import re,json,requests
