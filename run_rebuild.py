@@ -573,8 +573,8 @@ def get_classified_alias(alias: set):
     return names
 
 # 获取某个分句的位置
-def get_comma_pos(sent: str, ):
-    
+def get_clause_pos(sent: str, token: str):
+    sent.rfind()
     pass
 
 # 去除无关紧要的空白字符、引号等；将英文标点转换为中文标点；将标签指示符转为书名号
