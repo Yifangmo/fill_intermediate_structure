@@ -4,15 +4,15 @@ import requests
 import json
 import re
 
-LABEL_ER = ('(<关联方>)', 5)
-LABEL_AM = ('(<金额>)', 4)
-LABEL_ATTR = ('(<属性名词>)', 6)
-LABEL_OT = ('(<发生时间>)', 6)
-LABEL_PT = ('(<披露时间>)', 6)
-LABEL_DT = ('(<交易类型>)', 6)
-LABEL_FL = ('(<融资方标签>)', 7)
+LABEL_ER = ("(<关联方>)", 5)
+LABEL_AM = ("(<金额>)", 4)
+LABEL_ATTR = ("(<属性名词>)", 6)
+LABEL_OT = ("(<发生时间>)", 6)
+LABEL_PT = ("(<披露时间>)", 6)
+LABEL_DT = ("(<交易类型>)", 6)
+LABEL_FL = ("(<融资方标签>)", 7)
 
-WILDCARD = '[^，]*'
+WILDCARD = "[^，]*"
 
 LABEL_STR_MAP = {
     "关联方": LABEL_ER,
@@ -30,16 +30,16 @@ class MyJSONEncoder(json.JSONEncoder):
   def iterencode(self, o, _one_shot=False):
     list_lvl = 0
     for s in super(MyJSONEncoder, self).iterencode(o, _one_shot=_one_shot):
-      if s.startswith('['):
+      if s.startswith("["):
         list_lvl += 1
-        s = s.replace('\n', '').rstrip()
+        s = s.replace("\n", "").rstrip()
       elif 0 < list_lvl:
-        s = s.replace('\n', '').rstrip()
-        if s and s[-1] == ',':
+        s = s.replace("\n", "").rstrip()
+        if s and s[-1] == ",":
           s = s[:-1] + self.item_separator
-        elif s and s[-1] == ':':
+        elif s and s[-1] == ":":
           s = s[:-1] + self.key_separator
-      if s.endswith(']'):
+      if s.endswith("]"):
         list_lvl -= 1
       yield s
 
@@ -56,52 +56,23 @@ def get_ner_predict(sent):
 
 class Rule1(object):
     def __init__(self):
-        self.pattern = r"(<披露时间>|<发生时间>)?[^，<>]*(<融资方标签>)?(<关联方>)?[^，<>]*(<披露时间>|<发生时间>)?[^，<>]*(?:完成|获)[^，<>]*(?:((?:(?:<属性名词>的?)?(?:<关联方>)(?:、|和|以?及)?)+)?等?(领投|牵头)?)?[^，<>]*(?:(<交易类型>)?|(?:<属性名词>)?)(<金额>)?[^，<>]*(<交易类型>)"
+        self.pattern = r"(?P<bp><融资方标签>)?(?P<fc><关联方>)?[^，；<>]*(?:完成|获)[^，；]*(?P<ds><金额>)?[^，；<>]*<交易类型>"
         self.reobj = re.compile(self.pattern)
-        self.field_names_in_order = ["date", "business_profile", "financing_company",
-                                     "date", "investors", "is_leading_investor", "deal_type", "deal_size", "deal_type"]
+        self.field_name2tag_name = {"business_profile": "bp", "financing_company": "fc", "deal_size": "ds"}
 
-    def __call__(self, entities_sent, sent: str, entities_index_dict: dict):
+    def __call__(self, entities_sent, sent: str):
         matches = self.reobj.finditer(entities_sent)
         match_result = []
         for m in matches:
             struct = {}
-            dates = []
-            deal_type = ""
-            labels_used = set({})
-            for group_id, field_name in enumerate(self.field_names_in_order, 1):
-                sp = m.span(group_id)
-                if sp == (-1, -1):
-                    continue
-                if field_name == "investors":
-                    spans = get_multi_value_idx_spans(
-                        entities_sent, sp, "<关联方>")
-                    primary_names = get_field_values(
-                        sent, entities_index_dict, spans)
-                    struct["investors"] = primary_names
-                    struct["is_leading_investor"] = False
-                    labels_used.update(spans)
-                else:
-                    if field_name == "is_leading_investor":
-                        struct["is_leading_investor"] = True
-                    else:
-                        field_value = get_field_value(
-                            sent, entities_index_dict, sp)
-                        labels_used.add(sp)
-                        if field_name == "date":
-                            dates.append(field_value)
-                        elif field_name == "deal_type":
-                            deal_type += field_value
-                        else:
-                            struct[field_name] = field_value
-            if len(dates) > 0:
-                struct["dates"] = dates
-                pass
-            if deal_type != "":
-                struct["deal_type"] = deal_type
+            for field_name, tag_name in self.field_name2tag_name:
+                sp = m.span(tag_name)
+                if sp != (-1, -1):
+                    struct[field_name] = sp
             if len(struct) > 0:
                 mr = {"struct": struct}
-                mr["labels_used"] = labels_used
+                match_span = m.span()
+                mr["span"] = get_clause_span(sent, match_span[0], match_span[1], additional_seps=["、"])
                 mr["from_rule"] = "Rule1"
                 match_result.append(mr)
         return match_result
@@ -109,40 +80,26 @@ class Rule1(object):
 
 class Rule2(object):
     def __init__(self):
-        # self.pattern = r"(?:((?:本|该|此)轮(?:战略)?(?:融资|投资)|<交易类型>)?由|由|^|(?<=，|>)|(?<=[^>]、))((?:(?:<属性名词>的?)?(?:<关联方>)(?:、|和|以?及)?)+)等?(?:机构|基金|(<属性名词>))?(?:联合|重仓加码|共同|独家)?领投"
-        self.pattern = r"((?:本|该|此)轮(?:战略)?(?:融资|投资)|<交易类型>)?[^，<>]*((?:(?:<属性名词>的?)?(?:<关联方>)(?:、|和|以?及)?)+)等?(?:机构|基金|(<属性名词>))?(?:联合|重仓加码|共同|独家)?领投"
+        self.pattern = r"((?:(?:<属性名词>的?)?(?:<关联方>)(?:、|和|以?及)?)+)等?(?:机构|基金|(<属性名词>))?(?:联合|重仓加码|共同|独家)?(?:领投|牵头)"
         self.reobj = re.compile(self.pattern)
-        self.deal_type_group_id = 1
-        self.investors_group_id = 2
-        self.attr_noun_group_id = 3
-        self.pattern_mapping = {1: "deal_type", 2: "investors"}
+        self.investors_group_id = 1
+        self.attr_noun_group_id = 2
 
-    def __call__(self, entities_sent: str, sent: str, entities_index_dict: dict):
+    def __call__(self, entities_sent: str, sent: str):
         matches = self.reobj.finditer(entities_sent)
         match_result = []
         for m in matches:
             struct = {}
-            labels_used = set({})
-            if m.span(self.deal_type_group_id) != (-1, -1):
-                sp = m.span(self.deal_type_group_id)
-                deal_type = get_field_value(sent, entities_index_dict, sp)
-                if deal_type:
-                    struct["deal_type"] = deal_type
-                    labels_used.add(sp)
-                else:
-                    struct["deal_type"] = m.group(self.deal_type_group_id)
             investors_idx_span = m.span(self.investors_group_id)
             investor_idx_spans = get_multi_value_idx_spans(
                 entities_sent, investors_idx_span, "<关联方>")
-            primary_names = get_field_values(
-                sent, entities_index_dict, investor_idx_spans)
-            if len(primary_names) > 0:
-                struct["investors"] = primary_names
+            if len(investor_idx_spans) > 0:
+                struct["investors"] = investor_idx_spans
                 struct["is_leading_investor"] = True
-                labels_used.update(investor_idx_spans)
             if len(struct) > 0:
                 mr = {"struct": struct}
-                mr["labels_used"] = labels_used
+                match_span = m.span()
+                mr["span"] = get_clause_span(sent, match_span[0], match_span[1], additional_seps=["、"])
                 mr["from_rule"] = "Rule2"
                 match_result.append(mr)
         return match_result
@@ -151,44 +108,25 @@ class Rule2(object):
 class Rule3(object):
     def __init__(self):
         # 其中，红杉中国作为老股东继续增持，华平投资则是本轮新进入的领投方。
-        self.pattern = r"(?:((?:本|该|此)轮(?:战略)?(?:融资|投资)|<交易类型>)?由|由|^|(?<=，|>|\w)|(?<=[^>]、)|(?<=<属性名词>))((?:(?:<属性名词>的?)?(?:<关联方>)(?:、|和|以?及)?)+)等?(?:机构|基金|则?(以|作为)?(?:<属性名词>)?)?也?(?:联合|共同|继续|同轮|独家|超额)?(?:参与到?|追加)?了?(?:战略)?(?:((?:本轮|本次)(?:投资|融资))|融资|投资|跟投|加持|增持|参投)"
+        self.pattern = r"((?:(?:<属性名词>的?)?(?:<关联方>)(?:、|和|以?及)?)+)等?(?:机构|基金|则?(以|作为)?(?:<属性名词>)?)?也?(?:联合|共同|继续|同轮|独家|超额)?(?:参与到?|追加)?了?(?:战略)?(?:(?:本轮|本次)(?:投资|融资)|融资|投资|跟投|加持|增持|参投)"
         self.reobj = re.compile(self.pattern)
-        self.deal_type1_group_id = 1
-        self.investors_group_id = 2
-        self.attr_noun_group_id = 3
-        self.deal_type2_group_id = 4
+        self.investors_group_id = 1
 
     def __call__(self, entities_sent: str, sent: str, entities_index_dict: dict):
         matches = self.reobj.finditer(entities_sent)
         match_result = []
         for m in matches:
             struct = {}
-            labels_used = set({})
-            deal_type = None
-            if m.span(self.deal_type1_group_id) != (-1, -1):
-                sp = m.span(self.deal_type1_group_id)
-                deal_type = get_field_value(sent, entities_index_dict, sp)
-                if deal_type:
-                    struct["deal_type"] = deal_type
-                    labels_used.add(sp)
-                else:
-                    struct["deal_type"] = m.group(self.deal_type1_group_id)
             investors_idx_span = m.span(self.investors_group_id)
             investor_idx_spans = get_multi_value_idx_spans(
                 entities_sent, investors_idx_span, "<关联方>")
-            primary_names = get_field_values(
-                sent, entities_index_dict, investor_idx_spans)
-            if len(primary_names) > 0:
-                struct["investors"] = primary_names
+            if len(investor_idx_spans) > 0:
+                struct["investors"] = investor_idx_spans
                 struct["is_leading_investor"] = False
-                labels_used.update(investor_idx_spans)
-            if not deal_type:
-                deal_type = m.group(self.deal_type2_group_id)
-            if deal_type:
-                struct["deal_type"] = deal_type
             if len(struct) > 0:
                 mr = {"struct": struct}
-                mr["labels_used"] = labels_used
+                match_span = m.span()
+                mr["span"] = get_clause_span(sent, match_span[0], match_span[1], additional_seps=["、"])
                 mr["from_rule"] = "Rule3"
                 match_result.append(mr)
         return match_result
@@ -197,8 +135,8 @@ class Rule3(object):
 class Rule4(object):
     def __init__(self):
         # <融资方标签><关联方>连续完成<属性名词><金额>的<交易类型>与<交易类型>
-        self.patterns_for_attr_noun = [r'(?:总|整体|累计)?融资(?:总?金?额|规模|累计金?额)|规模', r'投前估值', r'后估值', r'估值',
-                                       r'投资方|投资人|投资者|投资机构|参投方?', r'领投方?|领投机构', r'财务顾问|融资顾问']
+        self.patterns_for_attr_noun = [r"(?:总|整体|累计)?融资(?:总?金?额|规模|累计金?额)|规模", r"投前估值", r"后估值", r"估值",
+                                       r"投资方|投资人|投资者|投资机构|参投方?", r"领投方?|领投机构", r"财务顾问|融资顾问"]
         self.patterns_for_sentence = [
             (r"(<属性名词>)(?:已|将)?(?:达到?|为)?了?(<金额>)",
              self.patterns_for_attr_noun[:4], (1, 2)),
@@ -209,23 +147,23 @@ class Rule4(object):
             (r"((?:(?:<属性名词>的?)?(?:<关联方>)(?:、|和|以?及)?)+)等?(?:作为|在内的|等|则是|则以|(?:继续)?担?任)(<属性名词>)",
              self.patterns_for_attr_noun[4:], (2, 1))
         ]
-        self.deal_type_pattern = r'((?:本次|本轮)?(?:(?:(?:Pre-|pre-)?[A-H]\d?|天使|种子|战略|新一|上一?|本|此|该|两|首)(?:\+)?(?:轮|次)(?:融资)?)|天使投资)'
-        self.deal_type_group_id = 1
-        self.deal_type_reobj = re.compile(self.deal_type_pattern)
+        # self.deal_type_pattern = r"((?:本次|本轮)?(?:(?:(?:Pre-|pre-)?[A-H]\d?|天使|种子|战略|新一|上一?|本|此|该|两|首)(?:\+)?(?:轮|次)(?:融资)?)|天使投资)"
+        # self.deal_type_group_id = 1
+        # self.deal_type_reobj = re.compile(self.deal_type_pattern)
         self.patterns_with_multi_value_list_idx = {1, 2, 3}
         self.field_name_with_multi_value = {
-            'investors', 'leading_investors', 'finacial_advisers'}
+            "investors", "leading_investors", "finacial_advisers"}
         self.reobjs = [(re.compile(i[0]), [re.compile(j)
                         for j in i[1]], i[2]) for i in self.patterns_for_sentence]
         self.attr_noun_pattern_to_field_name = {
-            self.deal_type_pattern: 'deal_type',
-            self.patterns_for_attr_noun[0]: 'deal_size',
-            self.patterns_for_attr_noun[1]: 'pre_money_valuation',
-            self.patterns_for_attr_noun[2]: 'post_money_valuation',
-            self.patterns_for_attr_noun[3]: 'valuation',
-            self.patterns_for_attr_noun[4]: 'investors',
-            self.patterns_for_attr_noun[5]: 'leading_investors',
-            self.patterns_for_attr_noun[6]: 'finacial_advisers'
+            self.deal_type_pattern: "deal_type",
+            self.patterns_for_attr_noun[0]: "deal_size",
+            self.patterns_for_attr_noun[1]: "pre_money_valuation",
+            self.patterns_for_attr_noun[2]: "post_money_valuation",
+            self.patterns_for_attr_noun[3]: "valuation",
+            self.patterns_for_attr_noun[4]: "investors",
+            self.patterns_for_attr_noun[5]: "leading_investors",
+            self.patterns_for_attr_noun[6]: "finacial_advisers"
         }
 
     def __call__(self, entities_sent: str, sent: str, entities_index_dict: dict):
@@ -427,7 +365,7 @@ class Rule8(object):
 class Rule9(object):
     def __init__(self):
         # 此次注资，是高瓴创投对去年11月极飞科技12亿元人民币融资的追加投资。
-        # '此次注资，是<关联方>对<发生时间><关联方><金额><交易类型>的追加投资。'
+        # "此次注资，是<关联方>对<发生时间><关联方><金额><交易类型>的追加投资。"
         investors_pattern = r"((?:(?:<属性名词>的?)?(?:<关联方>)(?:、|和|以?及)?)+)等?"
         financing_company_pattern = r"(<融资方标签>)?(<关联方>)"
         date_pattern = r"(<披露时间>|<发生时间>)?[^，<>]*"
@@ -557,7 +495,7 @@ def get_field_values(sent: str, entities_index_dict: dict, spans: list):
 def get_classified_alias(alias: set):
     english_names = {n for n in alias if re.fullmatch(
         r"([A-Za-z\d]{3,}(?:\s[A-Za-z\d]+)*)", n)}
-    full_names = {n for n in alias if n.endswith(('公司','集团','基金'))}
+    full_names = {n for n in alias if n.endswith(("公司","集团","基金"))}
     primary_names = alias - english_names - full_names
     if len(primary_names) == 0:
         primary_names = full_names
@@ -573,9 +511,44 @@ def get_classified_alias(alias: set):
     return names
 
 # 获取某个分句的位置
-def get_clause_pos(sent: str, token: str):
-    sent.rfind()
-    pass
+def get_clause_span(sent: str, token_low_index: int, token_high_index: int, unique_sep:str = None, *additional_seps: str):
+    separators = ["；", "，", "。", "】", "【"]
+    if unique_sep:
+        separators = [unique_sep]
+    elif additional_seps:
+        separators += additional_seps 
+    l = len(sent)
+    begin = None
+    end = None
+    for i in range(token_low_index, -1, -1):
+        if sent[i] in separators:
+            begin = i+1
+            break
+    for i in range(token_high_index, l, 1):
+        if sent[i] in separators:
+            end = i
+            break
+    begin = begin if begin else 0
+    end = end if end else l
+    return begin, end
+
+def divide_real_dts_span(sent: str, idxspan2real_dts: dict, real_dt2label_dts: dict, separators: list):
+        if len(separators) == 0:
+            return idxspan2real_dts
+        separator = separators.pop(0)
+        new_idxspan2real_dts = {}
+        for span, real_dts in idxspan2real_dts.items():
+            if len(real_dts) == 1:
+                new_idxspan2real_dts[span] = real_dts
+                continue
+            label_dts = real_dt2label_dts[real_dts]
+            new_span = get_clause_span(sent, label_dts[0][0], label_dts[0][1], separator)
+            if new_span not in new_idxspan2real_dts:
+                new_idxspan2real_dts[new_span] = [real_dts]
+            else:
+                new_idxspan2real_dts[new_span].append(real_dts)
+        return divide_real_dts_span(sent, idxspan2real_dts, new_idxspan2real_dts, separators)
+
 
 # 去除无关紧要的空白字符、引号等；将英文标点转换为中文标点；将标签指示符转为书名号
 def normalize_sentence(sent: str):
@@ -586,117 +559,213 @@ def normalize_sentence(sent: str):
                 return dic[i]
     # 处理标题的空格
     if not sent.endswith("。") or sent.endswith("？"):
-        # sent = re.sub(r'(?<![A-Za-z])\s(?![A-Za-z])', '，', sent)
+        # sent = re.sub(r"(?<![A-Za-z])\s(?![A-Za-z])", "，", sent)
         pass
-    return re.sub(r'((?<![A-Za-z])\s|\s(?![A-Za-z])|“|”|「|」|‘|’)|(,)|(;)|(:)|(\()|(\))|(<)|(>)', repl, sent)
+    return re.sub(r"((?<![A-Za-z])\s|\s(?![A-Za-z])|“|”|「|」|‘|’)|(,)|(;)|(:)|(\()|(\))|(<)|(>)", repl, sent)
 
 
 class EntitiesDictExtrator(object):
     def __init__(self, funcs: list):
         self.validate_deal_type_reobj = re.compile(r"(((Pre-)?[A-H]\d?|天使|种子|战略|IPO|新一|上一?|本|此|该|两|首)(\++|＋+|plus)?(系列)?(轮|次)(融资|投资|投融资)?|(天使|种子|战略|风险|IPO|股权)(融资|投资|投融资)|融资|投资)", re.I)
-        self.validate_attr_noun_reobj = re.compile(r'(?:总|整体|累计)?融资(?:总?金?额|规模|累计金?额)|投前估值|后估值|估值|投资方|投资人|投资者|投资机构|领投方|领投机构|财务顾问|融资顾问')
-        self.repl_deal_type_reobj = re.compile(r'(轮|次|笔|轮战略)?(投资|融资)|投融资')
-        self.date_reobj = re.compile(r'\d{1,2}月\d{1,2}日|年\d{1,2}月')
+        self.validate_attr_noun_reobj = re.compile(r"(?:总|整体|累计)?融资(?:总?金?额|规模|累计金?额)|投前估值|后估值|估值|投资方|投资人|投资者|投资机构|领投方|领投机构|财务顾问|融资顾问")
+        self.repl_deal_type_reobj = re.compile(r"(轮|次|笔|轮战略)?(投资|融资)|投融资")
+        self.date_reobj = re.compile(r"\d{1,2}月\d{1,2}日|年\d{1,2}月")
         self.verb_reobj = re.compile(r"获|完成")
         self.func_a = funcs
         
-    # 返回交易类型实体到实际交易事件的映射
-    def get_deal_type_dict(self,  sentence_struct_info: dict):
+    # 返回clause_idx_span到实际交易事件和时间的映射
+    def get_span_dict(self,  sentence_struct_info: dict):
         sent = sentence_struct_info["sent"]
         labels_indexes = sentence_struct_info["labels_indexes"]
-        # 交易类型替换后的值到交易类型标签的映射，每个替换后的值代表一个实际交易事件
-        repl_dt_dict = {}
-        # 交易类型实体到实际交易事件的映射
-        deal_type_entity_dict = {}
-        # 实际交易事件
-        real_deal_types = []
+        label_dt2repl_dt = {}
+        repl_dt2real_dt = {}
+        amount_dt_pair = {}
         for i, li in enumerate(labels_indexes):
             label_content = sent[li[0]:li[1]]
             if li[2] == "交易类型":
                 repl_dt = self.repl_deal_type_reobj.sub("", label_content)
-                pre_comma_pos = sent.rfind('，', None, li[0])
-                post_comma_pos = sent.find('，', li[1], None)
-                if repl_dt != "":
-                    # 无效交易类型实体
-                    if label_content.endswith("投资") and not self.verb_reobj.search(sent, pre_comma_pos, li[0]) \
-                        or re.search(r"第|两|三|四|五|又一|(?<![a-zA-Z])\d", repl_dt):
-                        deal_type_entity_dict[label_content] = None
+                # 励销云宣布完成新一轮2000万美元B轮融资
+                if i > 1 and labels_indexes[i-1][2]=="金额" and labels_indexes[i-2][2]=="交易类型":
+                    if re.search(r"[A-Za-z]", repl_dt):
+                        pre_label_dt_content = sent[labels_indexes[i-2][0]:labels_indexes[i-2][1]]
+                        label_dt2repl_dt[(li[0],li[1])] = repl_dt
+                        # 删除原有的repl_dt，避免同一交易事件（real_dt）有多个repl_dt
+                        del repl_dt2real_dt[label_dt2repl_dt[(labels_indexes[i-2][0], labels_indexes[i-2][1])]]
+                        label_dt2repl_dt[(labels_indexes[i-2][0], labels_indexes[i-2][1])] = repl_dt
+                        repl_dt2real_dt[repl_dt] = pre_label_dt_content+label_content
                     else:
-                        if repl_dt in repl_dt_dict:
-                            pre = repl_dt_dict[repl_dt]
-                            # TODO
-                            real_dt = pre if len(pre) > len(label_content) else label_content
-                            deal_type_entity_dict[pre][2] = real_dt
-                            deal_type_entity_dict[label_content] = [pre_comma_pos, post_comma_pos, real_dt]
-                        else:
-                            repl_dt_dict[repl_dt] = label_content
-                            deal_type_entity_dict[label_content] = [pre_comma_pos, post_comma_pos, label_content]
-                elif re.match(r'融资|投资', label_content):
-                    if  i > 1 and labels_indexes[i-1][2] == "金额" and labels_indexes[i-2][2] == "交易类型":
-                        pre_dt_label = deal_type_entity_dict[repl_dt_dict[pre_dt]][2]
-                        if not pre_dt_label.endswith(('投资', '融资')):
-                            deal_type_entity_dict[repl_dt_dict[pre_dt]][2] += label_content
-        if len(repl_dt_dict) == 1:
-            for k, v in deal_type_entity_dict.items():
-                v[0] = 0
-                v[1] = len(sent)
-        return deal_type_entity_dict
+                        label_dt2repl_dt[(li[0],li[1])] = label_dt2repl_dt[(labels_indexes[i-2][0], labels_indexes[i-2][1])]
+                    continue
+                # 此类交易类型实体只用于匹配模板来获取融资方信息，不作为实际交易事件，也不为之划分span
+                if re.search(r"两|三|四|五|(?<![a-zA-Z])\d", repl_dt):
+                    continue
+                # "B+轮战略融资" 和 "B+轮投资"
+                if repl_dt in repl_dt2real_dt:
+                    label_dt2repl_dt[(li[0], li[1])] = repl_dt
+                    pre_real_dt = repl_dt2real_dt[repl_dt]
+                    real_dt = pre_real_dt if len(pre_real_dt) >= len(label_content) else label_content
+                    repl_dt2real_dt[repl_dt] = real_dt
+                    continue
+                
+                if i > 0 and labels_indexes[i-1][2]=="金额" and li[0] - labels_indexes[i-1][1] < 2:
+                    amount_dt_pair[(li[0],li[1])] = (labels_indexes[i-1][0],labels_indexes[i-1][1])
+                
+                label_dt2repl_dt[(li[0], li[1])] = repl_dt
+                repl_dt2real_dt[repl_dt] = label_content
 
-        # dt_reobj = re.compile(
-        #     r"(?:(?:(?:Pre-)?[A-H]\d?|天使|种子|新一|上一?|本|此|该|两|首)(?:\+)?(?:轮|次)(?:融资)?)|天使投资", re.I)
+        real_dt2label_dts = {}
 
-    def get_date_dict(self, sentence_struct_info: dict):
-        sent = sentence_struct_info["sent"]
-        labels_indexes = sentence_struct_info["labels_indexes"]
-        occurrence_dates = {}
-        disclosed_dates = {}
-        accurate_occurrence_dates = []
-        accurate_disclosed_dates = []
-        first_comma_pos = sent.find('，')
-        for li in labels_indexes:
-            label_content = sent[li[0]:li[1]]
-            pre_comma_pos = sent.rfind('，', None, li[0])
-            post_comma_pos = sent.rfind('，', None, li[1])   
-            match = self.date_reobj.search(label_content)
+        for label_dt, repl_dt in label_dt2repl_dt.items():
+            real_dt = repl_dt2real_dt[repl_dt]
+            if real_dt not in real_dt2label_dts:
+                real_dt2label_dts[real_dt] = [label_dt]
+            else:
+                real_dt2label_dts.append(label_dt)
+        idxspan2real_dts = {(0, len(sent)): list(real_dt2label_dts.keys())}
+        
+        if len(real_dt2label_dts) > 0:
+            separators = ["；", "，", "、"]
+            # 划分span为尽可能小单位，以尽可能使得每个span最多只有一个real_dt，最小的单位为"、"分割的短句的span
+            idxspan2real_dts = divide_real_dts_span(sent, idxspan2real_dts, real_dt2label_dts, separators)
+        
+        # 使前面的未被span覆盖的时间标签被其后面的dt_span覆盖，因为前面的时间很大可能是其后real_dt相关的时间
+        spans = sorted(idxspan2real_dts.keys())
+        for i, li in enumerate(labels_indexes):
+            if li[2] == "披露时间" or li[2] == "发生时间":
+                label_content = sent[li[0]:li[1]]
+                time_span = get_clause_span(sent, li[0], li[1])
+                for j, span in enumerate(spans):
+                    real_dts = idxspan2real_dts[span]
+                    if span[0] <= time_span[0] and time_span[1] <= span[1]:
+                        break
+                    if j == 0 and span[0] > time_span[1] or \
+                        j > 0 and spans[j-1][1] < time_span[0] and span[0] > time_span[1]:
+                        del idxspan2real_dts[span]
+                        idxspan2real_dts[(time_span[0], span[1])] = real_dts
+                        break
+        
+        # 向后扩展span，使所有span邻接，合并以"、"分割但无金额的span
+        spans = sorted(idxspan2real_dts.keys())
+        for i, span in enumerate(spans):
+            real_dts = idxspan2real_dts[span]
+            if i == len(span)-1:
+                del idxspan2real_dts[span]
+                idxspan2real_dts[(span[0], len(sent))] = real_dts
+                break
+            if span[1] != spans[i+1][0] - 1:
+                del idxspan2real_dts[span]
+                idxspan2real_dts[(span[0], spans[i+1][0] - 1)] = real_dts
+                continue
+            if i > 0 and span[0] == spans[i-1][1] + 1 and sent[spans[i-1][1]] == "、":
+                has_amount = False
+                for real_dt in real_dts:
+                    if real_dt2label_dts[real_dt][0] in amount_dt_pair:
+                        has_amount = True
+                        break
+                if not has_amount:
+                    pre_real_dts = idxspan2real_dts[spans[i-1]]
+                    del idxspan2real_dts[span]
+                    del idxspan2real_dts[spans[i-1]]
+                    idxspan2real_dts[(spans[i-1][0], span[1])] = real_dts + pre_real_dts
+        
+        # 生成span到date的映射，优先更准确的时间
+        idxspan2dates = {}
+        for i, li in enumerate(labels_indexes):
             if li[2] == "披露时间":
-                if match:
-                    accurate_disclosed_dates.append((li[0], li[1]))
-                if not match and li[0] > first_comma_pos:
-                    disclosed_dates[label_content] = [pre_comma_pos, post_comma_pos, accurate_disclosed_dates[0]] if len(accurate_disclosed_dates)>0 else [pre_comma_pos, post_comma_pos, None]
+                label_content = sent[li[0]:li[1]]
+                for span in idxspan2real_dts:
+                    if li[0] >= span[0] and li[1] <= span[1]:
+                        if span not in idxspan2dates or "disclosed_dates" not in idxspan2dates[span]:
+                            idxspan2dates[span] = {"disclosed_dates":[(li[0],li[1])]}
+                        else:
+                            pre_span = idxspan2dates[span]["disclosed_dates"][0]
+                            pre = sent[pre_span[0]:pre_span[1]]
+                            if not self.date_reobj.search(pre):
+                                idxspan2dates[span]["disclosed_dates"][0] = (li[0],li[1])
+                            elif self.date_reobj.search(label_content):
+                                idxspan2dates[span]["disclosed_dates"].append((li[0],li[1]))
+            if li[2] == "发生时间":
+                label_content = sent[li[0]:li[1]]
+                for span in idxspan2real_dts:
+                    if li[0] >= span[0] and li[1] <= span[1]:
+                        if span not in idxspan2dates or "occurrence_dates" not in idxspan2dates[span]:
+                            idxspan2dates[span] = {"occurrence_dates":[(li[0],li[1])]}
+                        else:
+                            pre_span = idxspan2dates[span]["occurrence_dates"][0]
+                            pre = sent[pre_span[0]:pre_span[1]]
+                            if not self.date_reobj.search(pre):
+                                idxspan2dates[span]["occurrence_dates"][0] = (li[0],li[1])
+                            elif self.date_reobj.search(label_content):
+                                idxspan2dates[span]["occurrence_dates"].append((li[0],li[1]))
+        
+        # 若real_dt有多个，则del；若有一个则为一个，若无则为None
+        spans = idxspan2real_dts.keys()
+        for span in spans:
+            real_dts = idxspan2real_dts[span]
+            if len(real_dts) > 1:
+                idxspan2real_dts[span] = None
+            elif len(real_dts) == 1:
+                idxspan2real_dts[span] = real_dts[0]
+            else:
+                m = self.validate_deal_type_reobj.search(sent, span[0], span[1])
+                if m :
+                    idxspan2real_dts[span] = m.group()
                 else:
-                    disclosed_dates[label_content] = [0, len(sent), label_content] if match else [0, len(sent), None]
-            elif li[2] == "发生时间":
-                if match:
-                    accurate_occurrence_dates.append((li[0], li[1]))
-                if not match and li[0] > first_comma_pos:
-                    occurrence_dates[label_content] = [pre_comma_pos, post_comma_pos, accurate_occurrence_dates[0]] if len(accurate_occurrence_dates)>0 else [pre_comma_pos, post_comma_pos, None]
-                else:
-                    occurrence_dates[label_content] = [0, len(sent), label_content] if match else [0, len(sent), None]
-        for k, v in disclosed_dates.items():
-            if v[2]:
-                continue
-            v[2] = sent[accurate_disclosed_dates[0][0]:accurate_disclosed_dates[0][1]] if len(accurate_disclosed_dates)>0 else k
-        for k, v in occurrence_dates.items():
-            if v[2]:
-                continue
-            v[2] = sent[accurate_occurrence_dates[0][0]:accurate_occurrence_dates[0][1]] if len(accurate_occurrence_dates)>0 else k
-
-        return occurrence_dates, disclosed_dates
-            
+                    idxspan2real_dts[span] = None
+                
+        # 根据span排序重新生成dict
+        idxspan2real_dt = {i[0]:i[1] for i in sorted(idxspan2real_dts.items())}
+        
+        return idxspan2real_dt, idxspan2dates, real_dt2label_dts
+               
     def validate_deal_type(self, sentence_struct_info: dict):
         sent = sentence_struct_info["sent"]
         labels_indexes = sentence_struct_info["labels_indexes"]
+        new_labels_indexes = []
         labels_unused = []
         
-        new_labels_indexes = []
-        for li in labels_indexes:
+        for i, li in enumerate(labels_indexes):
             label_content = sent[li[0]:li[1]]
-            if li[2] != '交易类型' or li[2] == '交易类型' and self.validate_deal_type_reobj.search(re.sub(r"\s",'', label_content)):
+            if li[2] != "交易类型":
                 new_labels_indexes.append(li)
-            else:
+                continue
+                
+            if not self.validate_deal_type_reobj.search(re.sub(r"\s","", label_content)):
                 labels_unused.append([label_content, li[2]])
-        del labels_indexes
-
+                continue
+            
+            # 该公司成立以来获得的第三次融资(无用)
+            if label_content.startswith("第"):
+                labels_unused.append([label_content, li[2]])
+                continue
+            
+            # 此轮本来只打算融资6000-8000万美元
+            if re.match(r"融资|投资", label_content) and i+1 < len(labels_indexes) and labels_indexes[i+1][0] == li[1] and labels_indexes[i+1][2] == "金额":
+                labels_unused.append([label_content, li[2]])
+                continue
+            
+            clause_pos_span = get_clause_span(sent, li[0], li[1])
+            # 本轮融资由深圳高新投战略投资(无用)
+            if label_content.endswith("投资") and not self.verb_reobj.search(sent, clause_pos_span[0], li[0]):
+                labels_unused.append([label_content, li[2]])
+                continue
+            
+            # 继2018年完成2.4亿A轮、2019年3月完成20亿人民币B轮、2020年8月和10月分别完成25亿人民币C轮和战略融资后(有用)
+            # 这是继去年Pre-A轮以及今年4月A轮之后(无用)
+            if "继" in sent[clause_pos_span[0]:li[0]] and "后" in sent[li[1], clause_pos_span[1]]:
+                isunuse = True
+                for j in range(i, -1, -1):
+                    if labels_indexes[j][0] < clause_pos_span[0]:
+                        break
+                    if labels_indexes[j][2] == "金额":
+                        isunuse = False
+                        break
+                if isunuse:
+                    labels_unused.append([label_content, li[2]])
+                continue
+            
+            new_labels_indexes.append(li)
+    
         return new_labels_indexes, labels_unused
 
     def get_entities_sent(self, sentence_struct_info: dict):
@@ -722,18 +791,18 @@ class EntitiesDictExtrator(object):
             replaced_list.append("<"+label[2]+">")
             start = label[1]
             # 使融资方标签和关联方标签邻近
-            if label[2] == '融资方标签' and (i + 1) < len(labels_indexes) and labels_indexes[i + 1][2] == "关联方":
+            if label[2] == "融资方标签" and (i + 1) < len(labels_indexes) and labels_indexes[i + 1][2] == "关联方":
                 idx_diff -= (labels_indexes[i + 1][0] - start)
                 start = labels_indexes[i + 1][0]
                 
-            if label[2] == '关联方':
+            if label[2] == "关联方":
                 er = sent[label[0]:label[1]]
                 # 处理括号内别名
                 alias[er] = {er}
-                if start < len(sent) and sent[start] == '（':
-                    end = sent.find('）', start)
+                if start < len(sent) and sent[start] == "（":
+                    end = sent.find("）", start)
                     # 排除一些情况，包括有标签<>的
-                    if end == -1 or re.search('<|隶属|领投|估值|股票代码', sent[start+1:end]):
+                    if end == -1 or re.search("<|隶属|领投|估值|股票代码", sent[start+1:end]):
                         continue
                     alias_reobj = re.compile(r"(?:简称|英文名|下称)：?")
                     m = alias_reobj.search(sent, start+1, end)
@@ -760,55 +829,28 @@ class EntitiesDictExtrator(object):
     def adjust_field(self, sentence_struct_info):
         sent = sentence_struct_info["sent"]
         entities_sent = sentence_struct_info["entities_sent"]
-        deal_type_dict = sentence_struct_info["deal_type_dict"]
-        occurrence_dates = sentence_struct_info["occurrence_dates"]
-        disclosed_dates = sentence_struct_info["disclosed_dates"]
+        idxspan2real_dt = sentence_struct_info["idxspan2real_dt"]
+        idxspan2dates = sentence_struct_info["idxspan2dates"]
+        real_dt2label_dts = sentence_struct_info["real_dt2label_dts"]
         match_result = sentence_struct_info["match_result"]
         entities_index_dict = sentence_struct_info["entities_index_dict"]
         total_labels = set(entities_index_dict.keys())
         total_labels_used = set({})
         alias = sentence_struct_info["alias"]
         invalid_mr = []
+        financing_company = None
         for mr in match_result:
             mr_struct = mr["struct"]
-            total_labels_used |= mr["labels_used"]
-            dt_set = {i[2] for i in deal_type_dict.values() if i}
-            # 有交易类型
-            if "deal_type" in mr_struct:
-                mr_deal_type = mr_struct["deal_type"]
-                # 指代交易类型
-                if mr_deal_type not in deal_type_dict:
-                    if len(dt_set) == 1:
-                        mr_struct["deal_type"] = dt_set.__iter__().__next__()
-                    elif len(dt_set) == 0:
-                        continue
-                # 无效交易类型
-                elif not deal_type_dict[mr_deal_type]:
-                    del mr_struct["deal_type"]
-                # 有效交易类型
-                else:
-                    mr_struct["deal_type"] = deal_type_dict[mr_deal_type][2]
-            # 无交易类型
-            else:
-                if len(dt_set) == 1:
-                    mr_struct["deal_type"] = dt_set.__iter__().__next__()
-                else:
-                    pass
-            
-            if "dates" in mr_struct:
-                mr_dates = mr_struct["dates"]
-                for date in mr_dates:
-                    if date in occurrence_dates:
-                        mr_struct["occurrence_date"] = occurrence_dates[date][2]
-                    elif date in disclosed_dates:
-                        mr_struct["disclosed_date"] = disclosed_dates[date][2]
-            else:
-                if len(occurrence_dates) == 1:
-                    for k, v in occurrence_dates.items():
-                        mr_struct["occurrence_date"] = v[2]
-                if len(disclosed_dates) == 1:
-                    for k, v in disclosed_dates.items():
-                        mr_struct["disclosed_date"] = v[2]
+            mr_span = mr["span"]
+            for span, real_dt in idxspan2real_dt:
+                if span[0] <= mr_span[0] and mr_span[1] <= span[1]:
+                    if real_dt:
+                        total_labels_used |= mr["labels_used"]
+                        mr_struct["deal_type"] = real_dt
+                    else:
+                        if "financing_company" in mr_struct:
+                            financing_company = mr_struct["financing_company"]
+                        invalid_mr.append(mr)
 
             if "financing_company" in mr_struct:
                 fc_name = mr_struct["financing_company"]
@@ -859,7 +901,7 @@ class EntitiesDictExtrator(object):
             "labels_indexes": labels_indexes,
         }
         sentence_struct_info["labels_indexes"], sentence_struct_info["labels_unused"] = self.validate_deal_type(sentence_struct_info)
-        sentence_struct_info["deal_type_dict"] = self.get_deal_type_dict(sentence_struct_info)
+        sentence_struct_info["idxspan2real_dt"], sentence_struct_info["idxspan2dates"], sentence_struct_info["real_dt2label_dts"] = self.get_span_dict(sentence_struct_info)
         sentence_struct_info["occurrence_dates"], sentence_struct_info["disclosed_dates"] = self.get_date_dict(sentence_struct_info)
         sentence_struct_info["labels_value"],sentence_struct_info["entities_index_dict"], sentence_struct_info["entities_sent"],sentence_struct_info["alias"] = self.get_entities_sent(sentence_struct_info)
         entities_sent = sentence_struct_info["entities_sent"]
