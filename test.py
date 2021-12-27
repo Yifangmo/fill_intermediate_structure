@@ -1,10 +1,11 @@
 #!/usr/bin/env python
 import re
-import run
+import run_rebuild
 import json
 import csv
 import xlsxwriter
 import requests
+import traceback
 
 class MyJSONEncoder(json.JSONEncoder):
 
@@ -38,8 +39,8 @@ def get_ner_predict(sent):
     return res
 
 def test1():
-    with open("./input/sample.csv", 'r') as inf:
-        wb = xlsxwriter.Workbook("./output/test_result.xlsx")
+    with open("./input/sample.csv", 'r') as inf , open("./output/err.log", 'w+') as errf:
+        wb = xlsxwriter.Workbook("./output/test_result1.xlsx")
         sh1 = wb.add_worksheet()
         sh2 = wb.add_worksheet()
         sh1.set_column(0, 0, 8)
@@ -64,8 +65,10 @@ def test1():
         # cnt = 1
         unuse_labels_count = 0
         total_labels_count = 0
+        
+        reader = list(reader)[::-1]
         for i, row in enumerate(reader,1):
-            # if cnt > 20:
+            # if cnt > 1000:
             #     break
             
             title = row[0]
@@ -73,10 +76,14 @@ def test1():
             for sent in sents:
                 
                 # cnt += 1
-                # if cnt > 16:
+                # if cnt > 1000:
                 #     break
                 
-                obj = run.ede(sent)
+                obj = None
+                try:
+                    obj = run_rebuild.ede(sent)
+                except BaseException as e:
+                    errf.write(traceback.format_exc()+'\n'+sent+'\n')
                 if not obj:
                     continue
                 
@@ -159,7 +166,7 @@ def get_deal_type():
             dt_set = set({})
             refer_dt_set = set({})
             for s in vs:
-                s = run.normalize_sentence(s)
+                s = run_rebuild.normalize_sentence(s)
                 resp = get_ner_predict(s)
                 if resp["error_message"] or not "labels_indexes" in resp["response"]:
                     print(resp["error_message"], ": ", s)
@@ -225,10 +232,8 @@ def get_deal_type():
             ws.write_string(rowidx, 3, "\n".join(refer_dt_set), str_format)
             rowidx += 1
         wb.close()
+        
     
-    
-o = re.compile(r"")
-o.sub()
     
 def get_valid_content(title:str, content:str):
     req = json.dumps({"content": content, "snapshot": {"title": title}})
@@ -251,6 +256,6 @@ def test_get_valid_content():
 
 if __name__ == "__main__":
     # test()
-    # test1()
+    test1()
     # refine_news()
-    get_deal_type()
+    # get_deal_type()

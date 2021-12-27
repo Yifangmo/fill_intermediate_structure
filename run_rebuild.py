@@ -3,6 +3,8 @@ from re import I
 import requests
 import json
 import re
+import rules
+import inspect
 
 LABEL_ER = ("(<关联方>)", 5)
 LABEL_AM = ("(<金额>)", 4)
@@ -52,372 +54,6 @@ def get_ner_predict(sent):
     r = requests.post(
         "http://192.168.88.204:6004/run_ner_predict", data=data.encode("utf-8"))
     res = json.loads(r.text)
-    return res
-
-class Rule1(object):
-    def __init__(self):
-        # 36氪获悉，<关联方>于<发生时间>连续完成<交易类型>，包括<关联方>投资的<金额><交易类型>，以及<关联方>领投和<关联方>跟投的<金额><交易类型>
-        self.pattern = r"(?P<bp><融资方标签>)?(?P<fc><关联方>)?[^，；<>]*(?:<发生时间>|<披露时间>)?[^，；<>]*(?:完成|获)[^，；]*(?P<ds><金额>)?[^，；<>]*<交易类型>"
-        self.reobj = re.compile(self.pattern)
-        self.field_name2tag_name = {"business_profile": "bp", "financing_company": "fc", "deal_size": "ds"}
-
-    def __call__(self, entities_sent, attr_noun_dict: dict):
-        matches = self.reobj.finditer(entities_sent)
-        match_result = []
-        for m in matches:
-            struct = {}
-            for field_name, tag_name in self.field_name2tag_name.items():
-                sp = m.span(tag_name)
-                if sp != (-1, -1):
-                    struct[field_name] = sp
-            if len(struct) > 0:
-                mr = {"struct": struct}
-                mr["match_span"] = m.span()
-                mr["from_rule"] = "Rule1"
-                match_result.append(mr)
-        return match_result
-
-
-class Rule2(object):
-    def __init__(self):
-        self.pattern = r"((?:(?:<属性名词>的?)?(?:<关联方>)(?:、|和|以?及)?)+)等?(?:机构|基金|(<属性名词>))?(?:联合|重仓加码|共同|独家)?(?:领投|牵头)"
-        self.reobj = re.compile(self.pattern)
-        self.investors_group_id = 1
-        self.attr_noun_group_id = 2
-
-    def __call__(self, entities_sent: str, attr_noun_dict: dict):
-        matches = self.reobj.finditer(entities_sent)
-        match_result = []
-        for m in matches:
-            struct = {}
-            investors_idx_span = m.span(self.investors_group_id)
-            investor_idx_spans = get_multi_value_idx_spans(
-                entities_sent, investors_idx_span, "<关联方>")
-            if len(investor_idx_spans) > 0:
-                struct["investors"] = investor_idx_spans
-                struct["is_leading_investor"] = True
-            if len(struct) > 0:
-                mr = {"struct": struct}
-                mr["match_span"] = m.span()
-                mr["from_rule"] = "Rule2"
-                match_result.append(mr)
-        return match_result
-
-
-class Rule3(object):
-    def __init__(self):
-        # 其中，红杉中国作为老股东继续增持，华平投资则是本轮新进入的领投方。
-        self.pattern = r"((?:(?:<属性名词>的?)?(?:<关联方>)(?:、|和|以?及)?)+)等?(?:机构|基金|则?(以|作为)?(?:<属性名词>)?)?也?(?:联合|共同|继续|同轮|独家|超额)?(?:参与到?|追加)?了?(?:战略)?(?:(?:本轮|本次)(?:投资|融资)|融资|投资|跟投|加持|增持|参投)"
-        self.reobj = re.compile(self.pattern)
-        self.investors_group_id = 1
-
-    def __call__(self, entities_sent: str, attr_noun_dict: dict):
-        matches = self.reobj.finditer(entities_sent)
-        match_result = []
-        for m in matches:
-            struct = {}
-            investors_idx_span = m.span(self.investors_group_id)
-            investor_idx_spans = get_multi_value_idx_spans(
-                entities_sent, investors_idx_span, "<关联方>")
-            if len(investor_idx_spans) > 0:
-                struct["investors"] = investor_idx_spans
-                struct["is_leading_investor"] = False
-            if len(struct) > 0:
-                mr = {"struct": struct}
-                mr["match_span"] = m.span()
-                mr["from_rule"] = "Rule3"
-                match_result.append(mr)
-        return match_result
-
-
-class Rule4(object):
-    def __init__(self):
-        # <融资方标签><关联方>连续完成<属性名词><金额>的<交易类型>与<交易类型>
-        self.patterns_for_attr_noun = [r"(?:总|整体|累计)?融资(?:总?金?额|规模|累计金?额)|规模", r"投前估值", r"后估值", r"估值",
-                                       r"投资方|投资人|投资者|投资机构|参投方?", r"领投方?|领投机构", r"财务顾问|融资顾问"]
-        self.patterns_for_sentence = [
-            (r"(<属性名词>)(?:已|将)?(?:达到?|为)?了?(<金额>)",
-             self.patterns_for_attr_noun[:4], (1, 2)),
-            (r"(<属性名词>)还?(?:主要)?(?:为|是|有|囊括|包括|涉及|包?含)((?:(?:<属性名词>的?)?(?:<关联方>)(?:、|和|以?及)?)+)",
-             self.patterns_for_attr_noun[4:], (1, 2)),
-            (r"(<属性名词>)的?((?:(?:<属性名词>的?)?(?:<关联方>)(?:、|和|以?及)?)+)",
-             self.patterns_for_attr_noun[5:], (1, 2)),
-            (r"((?:(?:<属性名词>的?)?(?:<关联方>)(?:、|和|以?及)?)+)等?(?:作为|在内的|等|则是|则以|(?:继续)?担?任)(<属性名词>)",
-             self.patterns_for_attr_noun[4:], (2, 1))
-        ]
-        self.patterns_with_multi_value_list_idx = {1, 2, 3}
-        self.field_name_with_multi_value = {
-            "investors", "leading_investors", "finacial_advisers"}
-        self.reobjs = [(re.compile(i[0]), [re.compile(j)
-                        for j in i[1]], i[2]) for i in self.patterns_for_sentence]
-        self.attr_noun_pattern_to_field_name = {
-            self.patterns_for_attr_noun[0]: "deal_size",
-            self.patterns_for_attr_noun[1]: "pre_money_valuation",
-            self.patterns_for_attr_noun[2]: "post_money_valuation",
-            self.patterns_for_attr_noun[3]: "valuation",
-            self.patterns_for_attr_noun[4]: "investors",
-            self.patterns_for_attr_noun[5]: "leading_investors",
-            self.patterns_for_attr_noun[6]: "finacial_advisers"
-        }
-
-    def __call__(self, entities_sent: str, attr_noun_dict: dict):
-        match_result = []
-        for i, reobj in enumerate(self.reobjs):
-            matches = reobj[0].finditer(entities_sent)
-            attr_noun_content_reobjs = list(reobj[1])
-            attr_noun_group_id = reobj[2][0]
-            field_value_group_id = reobj[2][1]
-            for match in matches:
-                struct = {}
-                attr_noun_idx_span = match.span(attr_noun_group_id)
-                field_value_idx_spans = [match.span(field_value_group_id)]
-                if i in self.patterns_with_multi_value_list_idx:
-                    field_value_idx_spans = get_multi_value_idx_spans(
-                        entities_sent, field_value_idx_spans[0], "<关联方>")
-                attr_noun_origin_str =attr_noun_dict[attr_noun_idx_span]
-                
-                for ro in attr_noun_content_reobjs:
-                    m = ro.search(attr_noun_origin_str)
-                    if m:
-                        field_name = self.attr_noun_pattern_to_field_name[m.re.pattern]
-                        if field_name == "investors":
-                            struct["investors"] = field_value_idx_spans
-                            struct["is_leading_investor"] = False
-                        elif field_name == "leading_investors":
-                            struct["investors"] = field_value_idx_spans
-                            struct["is_leading_investor"] = True
-                        elif field_name == "finacial_advisers":
-                            struct["finacial_advisers"] = field_value_idx_spans
-                        else:
-                            struct[field_name] = field_value_idx_spans[0]
-                        struct["attr_noun"] = attr_noun_idx_span
-                if len(struct) > 0:
-                    mr = {"struct": struct}
-                    mr["match_span"] = match.span()
-                    mr["from_rule"] = "Rule4"
-                    match_result.append(mr)
-
-        return match_result
-
-class Rule5(object):
-    def __init__(self):
-        self.pattern = r"(?P<fc><关联方>)[^，；<>]*签署<交易类型>协议"
-        self.reobj = re.compile(self.pattern)
-        self.field_name2tag_name = {"financing_company": "fc"}
-        
-    def __call__(self, entities_sent: str, attr_noun_dict: dict):
-        matches = self.reobj.finditer(entities_sent)
-        match_result = []
-        for m in matches:
-            struct = {}
-            for field_name, tag_name in self.field_name2tag_name.items():
-                struct[field_name] = sp = m.span(tag_name)
-            if len(struct) > 0:
-                mr = {"struct": struct}
-                mr["match_span"] = m.span()
-                mr["from_rule"] = "Rule5"
-                match_result.append(mr)
-        return match_result
-    
-class Rule6(object):
-    def __init__(self):
-        # 中俄投资基金进行战略性股权投资
-        self.investors_pattern = r"(?P<i>(?:(?:<属性名词>的?)?(?:<关联方>)(?:、|和|以?及)?)+)等?"
-        self.pattern = self.investors_pattern + r"进行<交易类型>"
-        self.reobj = re.compile(self.pattern)
-        self.field_name2tag_name = {"investors": "i"}
-        
-    def __call__(self, entities_sent: str, attr_noun_dict: dict):
-        matches = self.reobj.finditer(entities_sent)
-        match_result = []
-        for m in matches:
-            struct = {}
-            for field_name, tag_name in self.field_name2tag_name.items():
-                sp = m.span(tag_name)
-                if field_name == "investors":
-                    primary_names = get_multi_value_idx_spans(
-                        entities_sent, sp, "<关联方>")
-                    struct["investors"] = primary_names
-                    struct["is_leading_investor"] = False
-                    continue
-                struct[field_name] = sp
-            if len(struct) > 0:
-                mr = {"struct": struct}
-                mr["match_span"] = m.span()
-                mr["from_rule"] = "Rule6"
-                match_result.append(mr)
-        return match_result
-   
-class Rule7(object):
-    def __init__(self):
-        # 作为<属性名词>，<关联方>这次选择了直接投资<关联方>。
-        # 此前，<关联方>、<关联方>、<关联方>、<关联方>、<关联方>、<关联方>等<属性名词>以<金额>投资「<关联方>」是中国农业科技领域历史上最大的一笔商业融资。
-        # self.pattern = r"(?:<属性名词>)?(<关联方>)投资(关联方)"
-        investors_pattern = r"(?P<i>(?:(?:<属性名词>的?)?(?:<关联方>)(?:、|和|以?及)?)+)等?"
-        financing_company_pattern = r"(?P<bp><融资方标签>)?(?P<fc><关联方>)"
-        attr_pattern = r"(?:<属性名词>)?"
-        self.pattern = "".join([investors_pattern, attr_pattern, r"(?P<ds><金额>)?[^，；<>]*", r"投资", financing_company_pattern ])
-        self.reobj = re.compile(self.pattern)
-        self.field_name2tag_name = {"investors": "i", "deal_size": "ds", "business_profile": "bp", "financing_company": "fc"}
-        
-    def __call__(self, entities_sent: str, attr_noun_dict: dict):
-        matches = self.reobj.finditer(entities_sent)
-        match_result = []
-        for m in matches:
-            struct = {}
-            for field_name, tag_name in self.field_name2tag_name.items():
-                sp = m.span(tag_name)
-                if sp == (-1, -1):
-                    continue
-                if field_name == "investors":
-                    spans = get_multi_value_idx_spans(
-                        entities_sent, sp, "<关联方>")
-                    struct["investors"] = spans
-                    struct["is_leading_investor"] = False
-                else:
-                    struct[field_name] = sp
-            if len(struct) > 0:
-                mr = {"struct": struct}
-                mr["match_span"] = m.span()
-                mr["from_rule"] = "Rule7"
-                match_result.append(mr)
-        return match_result
-
-class Rule8(object):
-    def __init__(self):
-        # 专注于人工智能的农业技术初创公司Intello Labs在由Avaana Capital牵头的一轮融资中筹集了500万美元
-        self.pattern = r"(?P<bp><融资方标签>)?(?P<fc><关联方>)[^，；<>]*<交易类型>[^，；<>]*筹集[^，；<>]*(?P<ds><金额>)"
-        self.reobj = re.compile(self.pattern)
-        self.field_name2tag_name = {"business_profile": "bp", "financing_company": "fc", "deal_size": "ds"}
-        
-    def __call__(self, entities_sent: str, attr_noun_dict: dict):
-        matches = self.reobj.finditer(entities_sent)
-        match_result = []
-        for m in matches:
-            struct = {}
-            for field_name, tag_name in self.field_name2tag_name.items():
-                sp = m.span(tag_name)
-                if sp != (-1, -1):
-                    struct[field_name] = sp
-            if len(struct) > 0:
-                mr = {"struct": struct}
-                mr["match_span"] = m.span()
-                mr["from_rule"] = "Rule8"
-                match_result.append(mr)
-        return match_result
-
-class Rule9(object):
-    def __init__(self):
-        # 此次注资，是高瓴创投对去年11月极飞科技12亿元人民币融资的追加投资。
-        # "此次注资，是<关联方>对<发生时间><关联方><金额><交易类型>的追加投资。"
-        investors_pattern = r"(?P<i>(?:(?:<属性名词>的?)?(?:<关联方>)(?:、|和|以?及)?)+)等?"
-        financing_company_pattern = r"(?P<bp><融资方标签>)?(?P<fc><关联方>)"
-        self.pattern = "".join([investors_pattern, r"对", financing_company_pattern, r"(?P<ds><金额>)?[^，；<>]*", r"<交易类型>?[^，；<>]*", r"投资"])
-        self.reobj = re.compile(self.pattern)
-        self.field_name2tag_name = {"investors": "i", "business_profile": "bp", "financing_company": "fc", "deal_size": "ds"}
-        
-    def __call__(self, entities_sent: str, attr_noun_dict: dict):
-        matches = self.reobj.finditer(entities_sent)
-        match_result = []
-        for m in matches:
-            struct = {}
-            for field_name, tag_name in self.field_name2tag_name.items():
-                sp = m.span(tag_name)
-                if sp != (-1, -1):
-                    continue
-                if field_name == "investors":
-                    primary_names = get_multi_value_idx_spans(
-                        entities_sent, sp, "<关联方>")
-                    struct["investors"] = primary_names
-                    struct["is_leading_investor"] = False
-                else:
-                    struct[field_name] = sp
-            if len(struct) > 0:
-                mr = {"struct": struct}
-                mr["match_span"] = m.span()
-                mr["from_rule"] = "Rule9"
-                match_result.append(mr)
-        return match_result
-
-class Rule10(object):
-    def __init__(self):
-        # Stripe估值达到950亿美元
-        self.pattern = r"(?P<fc><关联方>)估值达到?(?P<pmv><金额>)"
-        self.reobj = re.compile(self.pattern)
-        self.field_name2tag_name = {"financing_company": "fc", "post_money_valuation": "pmv"}
-        
-    def __call__(self, entities_sent: str, attr_noun_dict: dict):
-        matches = self.reobj.finditer(entities_sent)
-        match_result = []
-        for m in matches:
-            struct = {}
-            for field_name, tag_name in self.field_name2tag_name.items():
-                sp = m.span(tag_name)
-                struct[field_name] = sp
-            if len(struct) > 0:
-                mr = {"struct": struct}
-                mr["match_span"] = m.span()
-                mr["from_rule"] = "Rule10"
-                match_result.append(mr)
-        return match_result
-
-class Rule11(object):
-    def __init__(self):
-        # 本轮投资来自险峰长青。
-        self.deal_type_pattern = r"((?:(?:(?:Pre-|pre-)?[A-H]\d?|天使|种子|新一|上一?|本|此|该|两|首)(?:\+)?(?:轮|次)(?:融资|投资)?)|天使投资)"
-        self.investors_pattern = r"(?P<i>(?:(?:<属性名词>的?)?(?:<关联方>)(?:、|和|以?及)?)+)等?"
-        self.pattern = "".join([self.deal_type_pattern, r"来自", self.investors_pattern])
-        self.reobj = re.compile(self.pattern)
-        self.field_name2tag_name = {"investors": "i"}
-        
-    def __call__(self, entities_sent: str, sent: str):
-        matches = self.reobj.finditer(entities_sent)
-        match_result = []
-        for m in matches:
-            struct = {}
-            for group_id, field_name in enumerate(self.field_names_in_order, 1):
-                if field_name == "investors":
-                    struct["investors"] = get_multi_value_idx_spans(
-                        entities_sent, m.span(group_id), "<关联方>")
-                    struct["is_leading_investor"] = False
-            if len(struct) > 0:
-                mr = {"struct": struct}
-                mr["match_span"] = m.span()
-                mr["from_rule"] = "Rule11"
-                match_result.append(mr)
-        return match_result
-    
-    
-
-class Rule12(object):
-    def __init__(self):
-        self.pattern = r"(?P<ds><金额>)<交易类型>"
-        self.reobj = re.compile(self.pattern)
-        self.field_name2tag_name = {"deal_size": "ds"}
-        
-    def __call__(self, entities_sent: str, attr_noun_dict: dict):
-        matches = self.reobj.finditer(entities_sent)
-        match_result = []
-        for m in matches:
-            struct = {}
-            for field_name, tag_name in self.field_name2tag_name.items():
-                sp = m.span(tag_name)
-                struct[field_name] = sp
-            if len(struct) > 0:
-                mr = {"struct": struct}
-                mr["match_span"] = m.span()
-                mr["from_rule"] = "Rule12"
-                match_result.append(mr)
-        return match_result
-        
-
-
-def get_multi_value_idx_spans(entities_sent: str, pos_span: tuple, count_for: str):
-    res = []
-    list_reobj = re.compile(count_for)
-    matches = list_reobj.finditer(entities_sent, pos_span[0], pos_span[1])
-    for m in matches:
-        res.append(m.span())
     return res
 
 def get_field_value(sent: str, entities_index2original: dict, span: tuple):
@@ -519,8 +155,8 @@ def normalize_sentence(sent: str):
 
 
 class EntitiesDictExtrator(object):
-    def __init__(self, funcs: list):
-        self.validate_deal_type_reobj = re.compile(r"(((Pre-)?[A-H]\d?|天使|种子|战略|IPO|新一|上一?|本|此|该|两|首)(\++|＋+|plus)?(系列)?(轮|次)(融资|投资|投融资)?|(天使|种子|战略|风险|IPO|股权)(融资|投资|投融资)|融资|投资)", re.I)
+    def __init__(self, *funcs):
+        self.validate_deal_type_reobj = re.compile(r"(((Pre-)?[A-H]\d?|天使|种子|战略|IPO|新一|上一?|本|此|该|两|首)(\++|＋+|plus)?(系列)?(轮|次)(融资|投资|投融资)?|(天使|种子|战略|风险|IPO|股权)([融投]资|投融资)|[融投]资(?!人|者|方|机构))", re.I)
         self.validate_attr_noun_reobj = re.compile(r"(?:总|整体|累计)?融资(?:总?金?额|规模|累计金?额)|投前估值|后估值|估值|投资方|投资人|投资者|投资机构|领投方|领投机构|财务顾问|融资顾问")
         self.repl_deal_type_reobj = re.compile(r"(轮|次|笔|轮战略)?(投资|融资)|投融资")
         self.date_reobj = re.compile(r"\d{1,2}月\d{1,2}日|年\d{1,2}月")
@@ -528,12 +164,13 @@ class EntitiesDictExtrator(object):
         self.func_a = funcs
         
     # 返回clause_idx_span到实际交易事件和时间的映射
-    def get_span_dict(self,  sentence_struct_info: dict):
+    def get_span_dict(self, sentence_struct_info: dict):
         sent = sentence_struct_info["sent"]
         labels_indexes = sentence_struct_info["labels_indexes"]
         label_dt2repl_dt = {}
         repl_dt2real_dt = {}
         amount_dt_pair = {}
+        print("labels_indexes: ", labels_indexes)
         for i, li in enumerate(labels_indexes):
             label_content = sent[li[0]:li[1]]
             if li[2] == "交易类型":
@@ -574,7 +211,7 @@ class EntitiesDictExtrator(object):
             if real_dt not in real_dt2label_dts:
                 real_dt2label_dts[real_dt] = [label_dt]
             else:
-                real_dt2label_dts.append(label_dt)
+                real_dt2label_dts[real_dt].append(label_dt)
         idxspan2real_dts = {(0, len(sent)): list(real_dt2label_dts.keys())}
         
         if len(real_dt2label_dts) > 0:
@@ -586,11 +223,11 @@ class EntitiesDictExtrator(object):
             idxspan2real_dts = divide_real_dts_span(sent, idxspan2real_dts, real_dt2label_dts, separators)
         
         # 使前面的未被span覆盖的时间标签被其后面的dt_span覆盖，因为前面的时间很大可能是其后real_dt相关的时间
-        spans = sorted(idxspan2real_dts.keys())
         for i, li in enumerate(labels_indexes):
             if li[2] == "披露时间" or li[2] == "发生时间":
                 label_content = sent[li[0]:li[1]]
                 time_span = get_clause_span(sent, li[0], li[1])
+                spans = sorted(idxspan2real_dts.keys())
                 for j, span in enumerate(spans):
                     real_dts = idxspan2real_dts[span]
                     if span[0] <= time_span[0] and time_span[1] <= span[1]:
@@ -605,7 +242,7 @@ class EntitiesDictExtrator(object):
         spans = sorted(idxspan2real_dts.keys())
         for i, span in enumerate(spans):
             real_dts = idxspan2real_dts[span]
-            if i == len(span)-1:
+            if i == len(spans)-1:
                 del idxspan2real_dts[span]
                 idxspan2real_dts[(span[0], len(sent))] = real_dts
                 break
@@ -632,8 +269,10 @@ class EntitiesDictExtrator(object):
                 label_content = sent[li[0]:li[1]]
                 for span in idxspan2real_dts:
                     if li[0] >= span[0] and li[1] <= span[1]:
-                        if span not in idxspan2dates or "disclosed_dates" not in idxspan2dates[span]:
-                            idxspan2dates[span] = {"disclosed_dates":[(li[0],li[1])]}
+                        if span not in idxspan2dates:
+                            idxspan2dates[span] = {}
+                        if "disclosed_dates" not in idxspan2dates[span]:
+                            idxspan2dates[span]["disclosed_dates"] = [(li[0],li[1])]
                         else:
                             pre_span = idxspan2dates[span]["disclosed_dates"][0]
                             pre = sent[pre_span[0]:pre_span[1]]
@@ -645,8 +284,10 @@ class EntitiesDictExtrator(object):
                 label_content = sent[li[0]:li[1]]
                 for span in idxspan2real_dts:
                     if li[0] >= span[0] and li[1] <= span[1]:
-                        if span not in idxspan2dates or "occurrence_dates" not in idxspan2dates[span]:
-                            idxspan2dates[span] = {"occurrence_dates":[(li[0],li[1])]}
+                        if span not in idxspan2dates:
+                            idxspan2dates[span] = {}
+                        if "occurrence_dates" not in idxspan2dates[span]:
+                            idxspan2dates[span]["occurrence_dates"] = [(li[0],li[1])]
                         else:
                             pre_span = idxspan2dates[span]["occurrence_dates"][0]
                             pre = sent[pre_span[0]:pre_span[1]]
@@ -660,9 +301,20 @@ class EntitiesDictExtrator(object):
         for span in spans:
             real_dts = idxspan2real_dts[span]
             if len(real_dts) == 0:
-                m = self.validate_deal_type_reobj.search(sent, span[0], span[1])
-                if m :
-                    idxspan2real_dts[span] = [m.group()]
+                matches = self.validate_deal_type_reobj.finditer(sent, span[0], span[1])
+                for m in matches :
+                    mspan = m.span()
+                    is_valid = True
+                    for li in labels_indexes:
+                        # "维港投资"中的"投资"不是交易类型
+                        if li[2] == "关联方" and mspan[0] >= li[0] and mspan[1] <= li[1]:
+                            is_valid = False
+                            break
+                        if li[0] > mspan[1]:
+                            break
+                    if is_valid:
+                        idxspan2real_dts[span] = [m.group()]
+                        break
                 
         # 根据span排序重新生成dict
         idxspan2real_dts = {i[0]:i[1] for i in sorted(idxspan2real_dts.items())}
@@ -703,7 +355,7 @@ class EntitiesDictExtrator(object):
             
             # 继2018年完成2.4亿A轮、2019年3月完成20亿人民币B轮、2020年8月和10月分别完成25亿人民币C轮和战略融资后(有用)
             # 这是继去年Pre-A轮以及今年4月A轮之后(无用)
-            if "继" in sent[clause_pos_span[0]:li[0]] and "后" in sent[li[1], clause_pos_span[1]]:
+            if "继" in sent[clause_pos_span[0]:li[0]] and "后" in sent[li[1]:clause_pos_span[1]]:
                 isunuse = True
                 for j in range(i, -1, -1):
                     if labels_indexes[j][0] < clause_pos_span[0]:
@@ -833,10 +485,12 @@ class EntitiesDictExtrator(object):
         
         # 从所有的match_result中获取fc信息
         financing_company_info = {}
-        for mr in match_result:
-            mr_struct = mr["struct"]
+        i = 0
+        while i < len(match_result):
+            mr_struct = match_result[i]["struct"]
             if "financing_company" in mr_struct:
                 fc_span = mr_struct["financing_company"]
+                del mr_struct["financing_company"]
                 total_labels_used.add(fc_span)
                 fc_name = get_field_value(sent, entities_index2original, fc_span)
                 fc_names = get_classified_alias(alias[fc_name])
@@ -846,13 +500,24 @@ class EntitiesDictExtrator(object):
                 bp = None
                 if "business_profile" in mr_struct:
                     bp_span = mr_struct["business_profile"]
+                    del mr_struct["business_profile"]
                     total_labels_used.add(bp_span)
                     bp = get_field_value(sent, entities_index2original, bp_span)
                 if fc_name not in financing_company_info or fc_name in financing_company_info and bp:
-                    financing_company_info[fc_name] = {"business_profile": bp, "financing_company": fc}
+                    financing_company_info[fc_name] = {"business_profile": bp, "financing_company": fc} if bp else {"financing_company": fc}
+                # 删除无信息的mr
+                if len(mr_struct) == 0:
+                    match_result.pop(i)
+            i += 1
+
+        print("==========================================")
+        print("financing_company_info: ", financing_company_info)
         print("entities_sent: ", entities_sent)
         print("idxspan2real_dts: ", idxspan2real_dts)
         print("idxspan2dates: ", idxspan2dates)
+        print("==========================================")
+        print()
+        
         # 根据匹配的span对应的实际交易事件不同作不同处理，并将结构体的span字段值替换为实际值
         for mr in match_result:
             mr_struct = mr["struct"]
@@ -860,50 +525,53 @@ class EntitiesDictExtrator(object):
             for span, real_dts in idxspan2real_dts.items():
                 # print(mr_span, entities_sent[mr_span[0]:mr_span[1]])
                 if span[0] <= mr_span[0] and mr_span[1] <= span[1]:
-                    nmr_struct = {}
-                    nmr = {"struct": nmr_struct,"from_rule": mr["from_rule"]}
-                    if len(real_dts) > 1 and len(financing_company_info)!=0:
-                        for real_dt in real_dts:
-                            if real_dt in real_dt2label_dts:
-                                for label_dt in real_dt2label_dts[real_dt]:
-                                    total_labels_used.add(original_index2entities[label_dt])
-                            nmr_struct["deal_type"] = real_dt
-                            for k, v in financing_company_info[list(financing_company_info.keys())[0]].items():
-                                nmr_struct[k] = v
-                            new_match_result.append(nmr)
-                    elif len(real_dts) == 1:
-                        real_dt = real_dts[0]
-                        nmr_struct["deal_type"] = real_dt
+                    # TODO if len(real_dts) == 0 的情况
+                    for real_dt in real_dts:
+                        if len(financing_company_info)==0 and len(real_dts) > 1:
+                            break
+                        
+                        nmr_struct = {}
+                        nmr = {"struct": nmr_struct,"from_rule": mr["from_rule"]}
+                        # 添加使用过的deal_type和date标签以及填充date
                         if real_dt in real_dt2label_dts:
                             for label_dt in real_dt2label_dts[real_dt]:
-                                    total_labels_used.add(original_index2entities[label_dt])
+                                total_labels_used.add(original_index2entities[label_dt])
                         if span in idxspan2dates:
                             for field_name, date_spans in idxspan2dates[span].items():
                                 date_span = date_spans[0]
                                 nmr_struct[field_name] = sent[date_span[0]:date_span[1]]
                                 total_labels_used.add(original_index2entities[date_span])
-                        for k, v in mr_struct.items():
-                            if isinstance(v, tuple):
-                                total_labels_used.add(v)
-                                if k != "attr_noun":
-                                    nmr_struct[k] = get_field_value(sent, entities_index2original, v)
-                            elif isinstance(v, list):
-                                total_labels_used.update(v)
-                                investors = []
-                                is_leading_investor = mr_struct["is_leading_investor"] if "is_leading_investor" in mr_struct else False
-                                i_names = get_field_values(sent, entities_index2original, v)
-                                for i_name in i_names:
-                                    investor = {}
-                                    names = get_classified_alias(alias[i_name])
-                                    for k, v in names.items():
-                                        investor[k] = v
-                                    investor["is_leading_investor"] = is_leading_investor
-                                    investors.append(investor)
-                                nmr_struct["investors"] = investors
+                        nmr_struct["deal_type"] = real_dt
+                        
+                        # 如果有融资方信息就填充
+                        if len(financing_company_info)!=0:
+                            for k, v in financing_company_info[list(financing_company_info.keys())[0]].items():
+                                nmr_struct[k] = v
+                                
+                        # 如果只有一个real_deal_type就填充非共用部分
+                        if len(real_dts) == 1:
+                            for k, v in mr_struct.items():
+                                if isinstance(v, tuple):
+                                    total_labels_used.add(v)
+                                    # 跳过属性名词不填
+                                    if k != "attr_noun":
+                                        nmr_struct[k] = get_field_value(sent, entities_index2original, v)
+                                # 填充投资方信息（多个）
+                                elif isinstance(v, list):
+                                    total_labels_used.update(v)
+                                    investors = []
+                                    is_leading_investor = mr_struct["is_leading_investor"] if "is_leading_investor" in mr_struct else False
+                                    i_names = get_field_values(sent, entities_index2original, v)
+                                    for i_name in i_names:
+                                        investor = {}
+                                        names = get_classified_alias(alias[i_name])
+                                        for k, v in names.items():
+                                            investor[k] = v
+                                        investor["is_leading_investor"] = is_leading_investor
+                                        investors.append(investor)
+                                    nmr_struct["investors"] = investors
                         new_match_result.append(nmr)
-                    else:
-                        pass
-
+                        
         total_labels_unused = total_labels - total_labels_used
         labels_unused = []
         for i in sorted(total_labels_unused):
@@ -930,6 +598,7 @@ class EntitiesDictExtrator(object):
             return
         labels_indexes = resp["response"]["labels_indexes"]
         sentence_struct_info = {
+            "match_result": [],
             "sent": sent,
             "labels_indexes": labels_indexes,
         }
@@ -950,7 +619,16 @@ class EntitiesDictExtrator(object):
         self.adjust_field(sentence_struct_info)
         return sentence_struct_info
 
-ede = EntitiesDictExtrator([Rule1(), Rule2(), Rule3(), Rule4(), Rule5(), Rule6(), Rule7() ,Rule8(), Rule9(), Rule10(), Rule11(), Rule12()])
+ede = EntitiesDictExtrator(*[i[1]() for i in inspect.getmembers(rules, inspect.isclass) if i[0].startswith("Rule")])
+
+def test(rule, result):
+    entities_sent = result["entities_sent"]
+    r = rule()
+    tr = r.reobj.search(entities_sent)
+    print(rule.__name__, " test result", tr)
+
+def printlog(field_name :str, value):
+    print(field_name + ": ", value)
 
 if __name__ == "__main__":
     # 多分句共用关联方
@@ -986,6 +664,10 @@ if __name__ == "__main__":
 
     # obj = call("根据CVSource投中数据，煲仔皇曾于2015年获0331创投百万级天使轮融资，2016年获真格基金、老鹰基金、星瀚资本千万级PreA轮融资，2017年获弘毅投资旗下百福控股数千万A轮融资。")
     # obj = call("2021开年，B1轮融资发布不过4个月，奇点云再迎喜讯：于近日完成8000万元B2轮融资，字节跳动独家领投，老股东IDG资本跟投。")
-    obj = ede("36氪获悉，饭乎于近期连续完成两轮融资，包括昕先资本（洽洽家族基金）投资的千万元级天使轮融资，以及联想之星领投和拙朴投资跟投的数千万元级A轮融资。")
-
+    # obj = ede("36氪获悉，饭乎于近期连续完成两轮融资，包括昕先资本（洽洽家族基金）投资的千万元级天使轮融资，以及联想之星领投和拙朴投资跟投的数千万元级A轮融资。")
+    obj = ede("潮流服饰平价集市品牌“919氢仓”获青松基金等两轮千万元融资")
+    print("original_index2entities: ", obj["original_index2entities"])
+    print()
+    del obj["original_index2entities"]
     print(obj)
+    # test(rules.Rule3, obj)

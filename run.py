@@ -632,10 +632,11 @@ class EntitiesDictExtrator(object):
                             repl_dt_dict[repl_dt] = label_content
                             deal_type_entity_dict[label_content] = [pre_comma_pos, post_comma_pos, label_content]
                 elif re.match(r'融资|投资', label_content):
-                    if  i > 1 and labels_indexes[i-1][2] == "金额" and labels_indexes[i-2][2] == "交易类型":
-                        pre_dt_label = deal_type_entity_dict[repl_dt_dict[pre_dt]][2]
-                        if not pre_dt_label.endswith(('投资', '融资')):
-                            deal_type_entity_dict[repl_dt_dict[pre_dt]][2] += label_content
+                    # if  i > 1 and labels_indexes[i-1][2] == "金额" and labels_indexes[i-2][2] == "交易类型":
+                    #     pre_dt_label = deal_type_entity_dict[repl_dt_dict[pre_dt]][2]
+                    #     if not pre_dt_label.endswith(('投资', '融资')):
+                    #         deal_type_entity_dict[repl_dt_dict[pre_dt]][2] += label_content
+                    pass
         if len(repl_dt_dict) == 1:
             for k, v in deal_type_entity_dict.items():
                 v[0] = 0
