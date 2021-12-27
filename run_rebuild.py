@@ -156,9 +156,12 @@ def normalize_sentence(sent: str):
 
 class EntitiesDictExtrator(object):
     def __init__(self, *funcs):
-        self.validate_deal_type_reobj = re.compile(r"(((Pre-)?[A-H]\d?|天使|种子|战略|IPO|新一|上一?|本|此|该|两|首)(\++|＋+|plus)?(系列)?(轮|次)(融资|投资|投融资)?|(天使|种子|战略|风险|IPO|股权)([融投]资|投融资)|[融投]资(?!人|者|方|机构))", re.I)
+        self.validate_deal_type_reobj = re.compile(r"(((Pre-)?[A-H]\d?|天使|种子|战略|IPO|新一|上一?|首)(\++|＋+|plus)?((系列)?(轮|次)|系列)(([融投]资|投融资)(?!人|者|方|机构))?|\
+            (天使|种子|战略|风险|IPO|股权)([融投]资|投融资)(?!人|者|方|机构)|\
+            (本|此|该)(轮|次)([融投]资|投融资)?|\
+            [融投]资(?!人|者|方|机构))", re.I)
         self.validate_attr_noun_reobj = re.compile(r"(?:总|整体|累计)?融资(?:总?金?额|规模|累计金?额)|投前估值|后估值|估值|投资方|投资人|投资者|投资机构|领投方|领投机构|财务顾问|融资顾问")
-        self.repl_deal_type_reobj = re.compile(r"(轮|次|笔|轮战略)?(投资|融资)|投融资")
+        self.repl_deal_type_reobj = re.compile(r"(轮|次|笔|轮战略|系列轮?)?(投资|融资)|投融资")
         self.date_reobj = re.compile(r"\d{1,2}月\d{1,2}日|年\d{1,2}月")
         self.verb_reobj = re.compile(r"获|完成")
         self.func_a = funcs
@@ -181,11 +184,13 @@ class EntitiesDictExtrator(object):
                         pre_label_dt_content = sent[labels_indexes[i-2][0]:labels_indexes[i-2][1]]
                         label_dt2repl_dt[(li[0],li[1])] = repl_dt
                         # 删除原有的repl_dt，避免同一交易事件（real_dt）有多个repl_dt
-                        del repl_dt2real_dt[label_dt2repl_dt[(labels_indexes[i-2][0], labels_indexes[i-2][1])]]
+                        if (labels_indexes[i-2][0], labels_indexes[i-2][1]) in label_dt2repl_dt:
+                            del repl_dt2real_dt[label_dt2repl_dt[(labels_indexes[i-2][0], labels_indexes[i-2][1])]]
                         label_dt2repl_dt[(labels_indexes[i-2][0], labels_indexes[i-2][1])] = repl_dt
                         repl_dt2real_dt[repl_dt] = pre_label_dt_content+label_content
                     else:
-                        label_dt2repl_dt[(li[0],li[1])] = label_dt2repl_dt[(labels_indexes[i-2][0], labels_indexes[i-2][1])]
+                        label_dt2repl_dt[(li[0],li[1])] = label_dt2repl_dt[(labels_indexes[i-2][0], labels_indexes[i-2][1])] \
+                            if (labels_indexes[i-2][0], labels_indexes[i-2][1]) in label_dt2repl_dt else repl_dt
                     continue
                 # 此类交易类型实体只用于匹配模板来获取融资方信息，不作为实际交易事件，也不为之划分span
                 if re.search(r"两|三|四|五|(?<![a-zA-Z])\d", repl_dt):

@@ -1,4 +1,5 @@
 import re
+from typing import Callable
 
 class SuperRule(object):
     def __init__(self):
@@ -10,13 +11,16 @@ class SuperRule(object):
         self.may_be_deal_type_pattern = r"(?:<交易类型>)?"
         self.deal_type_pattern = r"<交易类型>"
         self.date_pattern = r"(?:<发生时间>|<披露时间>)?"
+        self.attr_noun_pattern = (r"(?P<attr><属性名词>)", "attr")
         self.anychar_pattern = r"[^，；]*?"
         self.anychar_notag_pattern = r"[^，；<>]*?"
     
-    def construct(self, entities_sent: str, is_leading_investor: bool = False):
+    def construct(self, entities_sent: str, is_leading_investor: bool = False, attr_handler: Callable = None):
         matches = self.reobj.finditer(entities_sent)
         match_result = []
         for m in matches:
+            if attr_handler and not attr_handler(m):
+                continue
             struct = {}
             for field_name, tag_name in self.field_name2tag_name.items():
                 sp = m.span(tag_name)
