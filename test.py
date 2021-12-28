@@ -43,6 +43,7 @@ def test1():
         wb = xlsxwriter.Workbook("./output/test_result1.xlsx")
         sh1 = wb.add_worksheet()
         sh2 = wb.add_worksheet()
+        sh3 = wb.add_worksheet()
         sh1.set_column(0, 0, 8)
         sh1.set_column(1, 1, 25)
         sh1.set_column(2, 3, 35)
@@ -55,11 +56,16 @@ def test1():
         sh2.set_column(4, 4, 10)
         sh2.set_column(5, 5, 50)
         sh2.set_column(6, 6, 8)
+        sh3.set_column(0, 0, 8)
+        sh3.set_column(1, 1, 25)
+        sh3.set_column(2, 3, 35)
+        sh3.set_column(4, 4, 50)
         str_format = wb.add_format({'align': 'center','valign': 'vcenter', 'text_wrap': True})
         reader = csv.reader(inf)
         next(reader)
         sh1.write_row(0,0,['news_id','title','valid_sentence','ner_entities','struct','unused'], str_format)
         sh2.write_row(0,0,['news_id','title','valid_sentence','ner_entities', 'rule_index', 'struct', 'is_valid'], str_format)
+        sh3.write_row(0,0,['news_id','title','valid_sentences','ner_entities','struct'], str_format)
         sh1_row_cnt = 1
         sh2_row_cnt = 1
         # cnt = 1
@@ -73,6 +79,9 @@ def test1():
             
             title = row[0]
             sents = row[1].split("\n---------- \n")
+            valid_sentences = row[1]
+            news_structs = []
+            labels_values = []
             for sent in sents:
                 
                 # cnt += 1
@@ -91,7 +100,9 @@ def test1():
                 data.append(i)
                 data.append(title)
                 data.append(sent)
-                data.append("\n".join([str(i) for i in obj["labels_value"]]))
+                lv_str = "\n".join([str(i) for i in obj["labels_value"]])
+                data.append(lv_str)
+                labels_values.append(lv_str)
                 match_result = obj["match_result"]
                 try:
                     data.append("\n--------\n".join([json.dumps(mr["struct"], ensure_ascii=False, indent=4) for mr in match_result]))
@@ -111,9 +122,30 @@ def test1():
                     data.append(sent)
                     data.append("\n".join([str(i) for i in obj["labels_value"]]))
                     data.append(from_rule)
-                    data.append(json.dumps(mr["struct"], ensure_ascii=False, indent=4))
+                    stru = mr["struct"]
+                    data.append(json.dumps(stru, ensure_ascii=False, indent=4))
+                    news_structs.append(stru)
                     sh2.write_row(sh2_row_cnt, 0, data, str_format)
                     sh2_row_cnt += 1
+            merged_result = None
+            try: 
+                merged_result = run_rebuild.mergenews.merge(news_structs)
+            except:
+                errf.write(traceback.format_exc()+valid_sentences+'\n\n')
+            else:
+                if isinstance(merged_result, dict):
+                    merged_result = json.dumps(merged_result, ensure_ascii=False, indent=4)
+                elif merged_result:
+                    merged_result = "\n--------\n".join([json.dumps(i, ensure_ascii=False, indent=4) for i in merged_result])
+                else:
+                    merged_result = ""
+                data = []
+                data.append(i)
+                data.append(title)
+                data.append(valid_sentences)
+                data.append("\n--------\n".join(labels_values))
+                data.append(merged_result)
+                sh3.write_row(i+1, 0, data, str_format)
         print("total_labels_count: ", total_labels_count)
         print("unuse_labels_count: ", unuse_labels_count)
         wb.close()

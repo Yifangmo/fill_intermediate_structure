@@ -1,10 +1,12 @@
 #!/usr/bin/env python
 from re import I
+from merge_engine import Merge
 import requests
 import json
 import re
 import rules
 import inspect
+
 
 LABEL_ER = ("(<关联方>)", 5)
 LABEL_AM = ("(<金额>)", 4)
@@ -57,25 +59,27 @@ def get_ner_predict(sent):
     return res
 
 def get_field_value(sent: str, entities_index2original: dict, span: tuple):
-    if span not in entities_index2original:
-        print("get_field_value 实体索引映射错误：({},{})".format(span[0], span[1]))
-        return
+    # if span not in entities_index2original:
+    #     print("get_field_value 实体索引映射错误：({},{})".format(span[0], span[1]))
+    #     return
     sent_idx_span = entities_index2original[span]
     return sent[sent_idx_span[0]: sent_idx_span[1]]
 
 def get_field_values(sent: str, entities_index2original: dict, spans: list):
     res = []
     for sp in spans:
-        if sp not in entities_index2original:
-            print("get_field_values 实体索引映射错误：({},{})".format(sp[0], sp[1]))
-            continue
+        # if sp not in entities_index2original:
+        #     print("get_field_values 实体索引映射错误：({},{})".format(sp[0], sp[1]))
+        #     continue
         sent_idx_span = entities_index2original[sp]
         res.append(sent[sent_idx_span[0]:sent_idx_span[1]])
     return res
 
 def get_classified_alias(alias: set):
-    english_names = {n for n in alias if re.fullmatch(
-        r"([A-Za-z\d]{3,}(?:\s[A-Za-z\d]+)*)", n)}
+    invalid_reobj = re.compile(r"\d{3,}")
+    alias = {i for i in alias if not invalid_reobj.search(i)}
+    en_reobj = re.compile(r"([A-Za-z\d]{3,}(?:\s[A-Za-z\d]+)*)")
+    english_names = {n for n in alias if en_reobj.fullmatch(n)}
     full_names = {n for n in alias if n.endswith(("公司","集团","基金"))}
     primary_names = alias - english_names - full_names
     if len(primary_names) == 0:
@@ -84,7 +88,7 @@ def get_classified_alias(alias: set):
         primary_names = english_names
     names = {}
     if len(primary_names) > 0:
-        names["primary_name"] = sorted(primary_names, key=lambda n: (len(n), n), reverse=True)[0]
+        names["primary_name"] = sorted(primary_names, key=lambda n: (len(n), n))[0]
     if len(english_names) > 0:
         names["english_name"] = sorted(english_names, key=lambda n: (len(n), n), reverse=True)[0]
     if len(full_names) > 0:
@@ -120,8 +124,6 @@ def get_clause_span(sent: str, token_low_index: int, token_high_index: int, uniq
     return begin, end
 
 def divide_real_dts_span(sent: str, idxspan2real_dts: dict, real_dt2label_dts: dict, separators: list):
-    print("idxspan2real_dts: ", idxspan2real_dts)
-    print("separators: ", separators)
     if len(separators) == 0:
         return idxspan2real_dts
     separator = separators.pop(0)
@@ -156,10 +158,14 @@ def normalize_sentence(sent: str):
 
 class EntitiesDictExtrator(object):
     def __init__(self, *funcs):
-        self.validate_deal_type_reobj = re.compile(r"(((Pre-)?[A-H]\d?|天使|种子|战略|IPO|新一|上一?|首)(\++|＋+|plus)?((系列)?(轮|次)|系列)(([融投]资|投融资)(?!人|者|方|机构))?|\
-            (天使|种子|战略|风险|IPO|股权)([融投]资|投融资)(?!人|者|方|机构)|\
-            (本|此|该)(轮|次)([融投]资|投融资)?|\
-            [融投]资(?!人|者|方|机构))", re.I)
+        self.validate_deal_type_reobj = re.compile(
+            (
+                r"((Pre-)?[A-H]\d?|天使|种子|战略|IPO|新一|两|三|四|五|上一?|首)(\++|＋+|plus)?((系列)?(轮|次)|系列)(([融投]资|投融资)(?!人|者|方|机构))|"
+                r"(天使|种子|战略|风险|IPO|股权)([融投]资|投融资)(?!人|者|方|机构)|"
+                r"(本|此|该)(轮|次)([融投]资|投融资)|"
+                r"[融投]资(?!人|者|方|机构)"
+            ), re.I
+        )
         self.validate_attr_noun_reobj = re.compile(r"(?:总|整体|累计)?融资(?:总?金?额|规模|累计金?额)|投前估值|后估值|估值|投资方|投资人|投资者|投资机构|领投方|领投机构|财务顾问|融资顾问")
         self.repl_deal_type_reobj = re.compile(r"(轮|次|笔|轮战略|系列轮?)?(投资|融资)|投融资")
         self.date_reobj = re.compile(r"\d{1,2}月\d{1,2}日|年\d{1,2}月")
@@ -188,7 +194,7 @@ class EntitiesDictExtrator(object):
                             del repl_dt2real_dt[label_dt2repl_dt[(labels_indexes[i-2][0], labels_indexes[i-2][1])]]
                         label_dt2repl_dt[(labels_indexes[i-2][0], labels_indexes[i-2][1])] = repl_dt
                         repl_dt2real_dt[repl_dt] = pre_label_dt_content+label_content
-                    else:
+                    elif repl_dt!="":
                         label_dt2repl_dt[(li[0],li[1])] = label_dt2repl_dt[(labels_indexes[i-2][0], labels_indexes[i-2][1])] \
                             if (labels_indexes[i-2][0], labels_indexes[i-2][1]) in label_dt2repl_dt else repl_dt
                     continue
@@ -210,7 +216,8 @@ class EntitiesDictExtrator(object):
                 repl_dt2real_dt[repl_dt] = label_content
 
         real_dt2label_dts = {}
-
+        print("label_dt2repl_dt: ", label_dt2repl_dt)
+        print("repl_dt2real_dt: ", repl_dt2real_dt)
         for label_dt, repl_dt in label_dt2repl_dt.items():
             real_dt = repl_dt2real_dt[repl_dt]
             if real_dt not in real_dt2label_dts:
@@ -307,7 +314,7 @@ class EntitiesDictExtrator(object):
             real_dts = idxspan2real_dts[span]
             if len(real_dts) == 0:
                 matches = self.validate_deal_type_reobj.finditer(sent, span[0], span[1])
-                for m in matches :
+                for m in matches:
                     mspan = m.span()
                     is_valid = True
                     for li in labels_indexes:
@@ -373,7 +380,7 @@ class EntitiesDictExtrator(object):
                 continue
             
             new_labels_indexes.append(li)
-    
+        print("deal_type_labels_unused: ", labels_unused)
         return new_labels_indexes, labels_unused
 
     def get_entities_sent(self, sentence_struct_info: dict):
@@ -382,7 +389,7 @@ class EntitiesDictExtrator(object):
         idxspan2real_dts = sentence_struct_info["idxspan2real_dts"]
         idxspan2dates = sentence_struct_info["idxspan2dates"]
         
-        entities_sent, entities_index2original, labels_value, alias, attr_noun_dict, original_index2entities = "", {}, [], {}, {}, {}
+        entities_sent, entities_index2original, alias, attr_noun_dict, original_index2entities = "", {}, {}, {}, {}
         # 标签替换前后首索引差值
         replaced_list = []
         idx_diff = 0
@@ -414,8 +421,6 @@ class EntitiesDictExtrator(object):
             if label[1] >= span_start and i > 0 and labels_indexes[i - 1][1] < span_start:
                 span_start_diff = idx_diff
                 print("span_start_diff: ", span_start_diff)
-            # 转为标签名和值
-            labels_value.append([label_content, label[2]])
             # 生成标签索引映射
             label_start_idx = label[0]+idx_diff
             label_length = LABEL_STR_MAP[label[2]][1]
@@ -471,7 +476,7 @@ class EntitiesDictExtrator(object):
         sentence_struct_info["idxspan2dates"] = new_idxspan2dates
         
         entities_sent = "".join(replaced_list)
-        return labels_value, entities_index2original, entities_sent, alias, attr_noun_dict, original_index2entities
+        return entities_index2original, entities_sent, alias, attr_noun_dict, original_index2entities
 
     # 填充deal_type，对dates分类，处理关联方别名，统计标签使用情况
     def adjust_field(self, sentence_struct_info):
@@ -510,9 +515,6 @@ class EntitiesDictExtrator(object):
                     bp = get_field_value(sent, entities_index2original, bp_span)
                 if fc_name not in financing_company_info or fc_name in financing_company_info and bp:
                     financing_company_info[fc_name] = {"business_profile": bp, "financing_company": fc} if bp else {"financing_company": fc}
-                # 删除无信息的mr
-                if len(mr_struct) == 0:
-                    match_result.pop(i)
             i += 1
 
         print("==========================================")
@@ -534,7 +536,6 @@ class EntitiesDictExtrator(object):
                     for real_dt in real_dts:
                         if len(financing_company_info)==0 and len(real_dts) > 1:
                             break
-                        
                         nmr_struct = {}
                         nmr = {"struct": nmr_struct,"from_rule": mr["from_rule"]}
                         # 添加使用过的deal_type和date标签以及填充date
@@ -562,7 +563,7 @@ class EntitiesDictExtrator(object):
                                     if k != "attr_noun":
                                         nmr_struct[k] = get_field_value(sent, entities_index2original, v)
                                 # 填充投资方信息（多个）
-                                elif isinstance(v, list):
+                                elif k == "investors":
                                     total_labels_used.update(v)
                                     investors = []
                                     is_leading_investor = mr_struct["is_leading_investor"] if "is_leading_investor" in mr_struct else False
@@ -575,6 +576,10 @@ class EntitiesDictExtrator(object):
                                         investor["is_leading_investor"] = is_leading_investor
                                         investors.append(investor)
                                     nmr_struct["investors"] = investors
+                                elif k == "finacial_advisers":
+                                    total_labels_used.update(v)
+                                    finacial_advisers = get_field_values(sent, entities_index2original, v)
+                                    nmr_struct["finacial_advisers"] = finacial_advisers
                         new_match_result.append(nmr)
                         
         total_labels_unused = total_labels - total_labels_used
@@ -607,9 +612,11 @@ class EntitiesDictExtrator(object):
             "sent": sent,
             "labels_indexes": labels_indexes,
         }
+        labels_value = [[sent[li[0]:li[1]], li[2]] for li in labels_indexes]
+        sentence_struct_info["labels_value"] = labels_value
         sentence_struct_info["labels_indexes"], sentence_struct_info["labels_unused"] = self.validate_deal_type(sentence_struct_info)
         sentence_struct_info["idxspan2real_dts"], sentence_struct_info["idxspan2dates"], sentence_struct_info["real_dt2label_dts"] = self.get_span_dict(sentence_struct_info)
-        sentence_struct_info["labels_value"],sentence_struct_info["entities_index2original"], sentence_struct_info["entities_sent"],sentence_struct_info["alias"], sentence_struct_info["attr_noun_dict"], sentence_struct_info["original_index2entities"] = self.get_entities_sent(sentence_struct_info)
+        sentence_struct_info["entities_index2original"], sentence_struct_info["entities_sent"],sentence_struct_info["alias"], sentence_struct_info["attr_noun_dict"], sentence_struct_info["original_index2entities"] = self.get_entities_sent(sentence_struct_info)
         entities_sent = sentence_struct_info["entities_sent"]
         attr_noun_dict = sentence_struct_info["attr_noun_dict"]
 
@@ -630,12 +637,112 @@ def test(rule, result):
     entities_sent = result["entities_sent"]
     r = rule()
     tr = r.reobj.search(entities_sent)
+    print("r.reobj: ", r.reobj)
     print(rule.__name__, " test result", tr)
 
 def printlog(field_name :str, value):
     print(field_name + ": ", value)
+    # <关联方>就获<关联方>和<关联方><金额>的<交易类型>
+# (?:完成|获得?)(?P<i>(?:(?:<属性名词>的?)?(?:<关联方>)(?:、|和|以?及)?)+)等?(?:机构|基金|则?(?:以|作为)?(?:<属性名词>))?[^，；<>]*?(?P<ds><金额>)?<交易类型>
+class MergeNews():
+    def __init__(self):
+        self.repl_deal_type_reobj = re.compile(r"(轮|次|笔|轮战略|系列轮?)?(投资|融资)|投融资")
+        self.refer_deal_type_reobj = re.compile(r"(本|此|该)")
+        self.keys = ['deal_type', 'investors.primary_name', 'financing_company.primary_name']
+        self.is_leading_investor_filter = lambda s : True in s
+        self.filters_dict={'investors.is_leading_investor': self.is_leading_investor_filter}
+        self.mergeengine = Merge()
+        pass
+    
+    def merge(self, match_result):
+        deal_type2match_result = {}
+        refer_deal_type2match_result = {}
+        repl_dt_map = {}
+        dt_tmp = None
+        for mr in match_result:
+            if "deal_type" not in mr:
+                if None in refer_deal_type2match_result:
+                    refer_deal_type2match_result[None].append(mr)
+                else:
+                    refer_deal_type2match_result[None] = [mr]
+            dt = mr["deal_type"]
+            if dt in deal_type2match_result:
+                deal_type2match_result[dt].append(mr)
+            elif dt in refer_deal_type2match_result:
+                refer_deal_type2match_result[dt].append(mr)
+            else:
+                if self.refer_deal_type_reobj.search(dt):
+                    refer_deal_type2match_result[dt] = [mr]
+                else:
+                    dt_tmp = dt
+                    repl_dt = self.repl_deal_type_reobj.sub("",dt)
+                    # print("repl_dt: ", repl_dt)
+                    # print("repl_dt_map: ", repl_dt_map)
+                    if repl_dt in repl_dt_map:
+                        pre_dt = repl_dt_map[repl_dt]
+                        ult_dt = None
+                        if len(pre_dt) > len(dt):
+                            ult_dt = pre_dt
+                        elif len(pre_dt) < len(dt):
+                            ult_dt = dt
+                        else:
+                            if dt.endswith("融资"):
+                                ult_dt = dt
+                            else:
+                                ult_dt = pre_dt
+                        if ult_dt == pre_dt:
+                            mr["deal_type"] = ult_dt
+                            deal_type2match_result[ult_dt].append(mr)
+                        else:
+                            pre_mr = deal_type2match_result[pre_dt]
+                            del deal_type2match_result[pre_dt]
+                            for mr in pre_mr:
+                                mr["deal_type"] = ult_dt
+                            pre_mr.append(mr)
+                            deal_type2match_result[ult_dt] = pre_mr
+                            repl_dt_map[repl_dt] = ult_dt
+                    else:
+                        repl_dt_map[repl_dt] = dt
+                        deal_type2match_result[dt] = [mr]
+        if len(deal_type2match_result) == 1 and len(refer_deal_type2match_result) != 0:
+            for dt, mr in refer_deal_type2match_result.items():
+                for r in mr:
+                    r["deal_type"] = dt_tmp
+                deal_type2match_result[dt_tmp] += mr
+                
+        merge_result = self.mergeengine.handle(list(deal_type2match_result.values()), self.keys, self.filters_dict)
+        return merge_result
+    
+mergenews = MergeNews()
+
+def test_merge():
+    sents = [
+        "上半年湖南省完成交通固定资产投资419.69亿元 投资总额和完成比例均为历史同期最高水平",
+        "红网时刻7月21日讯（记者 曾拥璇 实习生 钟冬梅 通讯员 袁东伟 杨红伟）今日，记者从湖南省交通运输厅获悉，1-6月，湖南省完成交通固定资产投资419.69亿元，同比2020年、2019年分别增长65.73%、108.83%，为年度目标的51.94%，超原定40%计划目标近12个百分点，投资总额和完成比例均为历史同期最高水平。"
+        # "投资界（ID：pedaily2012）8月12日消息，近日，致力于为移动和消费类设备提供高光谱传感解决方案的全球领先供应商—比利时Spectricity宣布完成1400万欧元（1600万美元）B轮融资，浦科投资管理的上海半导体装备材料产业投资基金（简称“上海半导体装备材料基金”）作为重要投资方，参与了该轮融资。"
+    ]
+    strus = []
+    for s in sents:
+        obj = ede(s)
+        print(obj)
+        for mr in obj["match_result"]:
+            strus.append(mr["struct"])
+    merged = mergenews.merge(strus)
+    print(merged)
+    pass
+
+def test_gen():
+    obj = ede("Spectricity宣布完成1400万欧元（1600万美元）B轮融资，浦科投资管理的上海半导体装备材料产业投资基金（简称“上海半导体装备材料基金”）作为重要投资方，参与了该轮融资。")
+    # print("original_index2entities: ", obj["original_index2entities"])
+    # print()
+    # del obj["original_index2entities"]
+    print(obj)
+    # test(rules.Rule13, obj)
+    pass
 
 if __name__ == "__main__":
+    test_merge()
+    # test_gen()
     # 多分句共用关联方
     # obj = call("9月1日消息，近日，教育机器人及STEAM玩教具公司LANDZO蓝宙科技宣布，公司已于6月完成A轮1.89亿元融资，投资方为至临资本、文化产业上市资方、中视金桥、南京市政府基金，庚辛资本担任长期独家财务顾问。")
     # obj = call("投资界（ID：pedaily2012）5月11日消息，近期，上海九穗农业科技有限公司（以下简称：米小芽），再次获得数千万A轮融资，由老股东新梅资本领投。")
@@ -670,9 +777,3 @@ if __name__ == "__main__":
     # obj = call("根据CVSource投中数据，煲仔皇曾于2015年获0331创投百万级天使轮融资，2016年获真格基金、老鹰基金、星瀚资本千万级PreA轮融资，2017年获弘毅投资旗下百福控股数千万A轮融资。")
     # obj = call("2021开年，B1轮融资发布不过4个月，奇点云再迎喜讯：于近日完成8000万元B2轮融资，字节跳动独家领投，老股东IDG资本跟投。")
     # obj = ede("36氪获悉，饭乎于近期连续完成两轮融资，包括昕先资本（洽洽家族基金）投资的千万元级天使轮融资，以及联想之星领投和拙朴投资跟投的数千万元级A轮融资。")
-    obj = ede("潮流服饰平价集市品牌“919氢仓”获青松基金等两轮千万元融资")
-    print("original_index2entities: ", obj["original_index2entities"])
-    print()
-    del obj["original_index2entities"]
-    print(obj)
-    # test(rules.Rule3, obj)

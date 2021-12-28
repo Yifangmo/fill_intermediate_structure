@@ -50,147 +50,84 @@ class Rule3(SuperRule):
 class Rule4(SuperRule):
     def __init__(self):
         super().__init__()
-        # <融资方标签><关联方>连续完成<属性名词><金额>的<交易类型>与<交易类型>
-        self.patterns_for_attr_noun = [r"(?:总|整体|累计)?融资(?:总?金?额|规模|累计金?额)|规模", r"投前估值", r"后估值", r"估值",
-                                       r"投资方|投资人|投资者|投资机构|参投|跟投", r"领投方?|领投机构", r"财务顾问|融资顾问"]
-        self.patterns_for_sentence = [
-            (r"(<属性名词>)(?:已|将)?(?:达到?|为)?了?(<金额>)",
-             self.patterns_for_attr_noun[:4], (1, 2)),
-            (r"(<属性名词>)还?(?:主要)?(?:为|是|有|囊括|包括|涉及|包?含)((?:(?:<属性名词>的?)?(?:<关联方>)(?:、|和|以?及)?)+)",
-             self.patterns_for_attr_noun[4:], (1, 2)),
-            (r"(<属性名词>)的?((?:(?:<属性名词>的?)?(?:<关联方>)(?:、|和|以?及)?)+)",
-             self.patterns_for_attr_noun[5:], (1, 2)),
-            (r"((?:(?:<属性名词>的?)?(?:<关联方>)(?:、|和|以?及)?)+)等?(?:作为|在内的|等|则是|则以|(?:继续)?担?任)(<属性名词>)",
-             self.patterns_for_attr_noun[4:], (2, 1))
-        ]
-        self.patterns_with_multi_value_list_idx = {1, 2, 3}
-        self.field_name_with_multi_value = {
-            "investors", "leading_investors", "finacial_advisers"}
-        self.reobjs = [(re.compile(i[0]), [re.compile(j)
-                        for j in i[1]], i[2]) for i in self.patterns_for_sentence]
-        self.attr_noun_pattern_to_field_name = {
-            self.patterns_for_attr_noun[0]: "deal_size",
-            self.patterns_for_attr_noun[1]: "pre_money_valuation",
-            self.patterns_for_attr_noun[2]: "post_money_valuation",
-            self.patterns_for_attr_noun[3]: "valuation",
-            self.patterns_for_attr_noun[4]: "investors",
-            self.patterns_for_attr_noun[5]: "leading_investors",
-            self.patterns_for_attr_noun[6]: "finacial_advisers"
+        self.pattern = "".join([self.full_financing_company_pattern[0], self.anychar_notag_pattern, "，"])
+        self.reobj = re.compile(self.pattern)
+        self.field_name2tag_name = {
+            "business_profile": self.financing_company_pattern[1], 
+            "financing_company": self.financing_company_pattern[2], 
         }
-
-    def __call__(self, entities_sent: str, attr_noun_dict: dict):
-        match_result = []
-        for i, reobj in enumerate(self.reobjs):
-            matches = reobj[0].finditer(entities_sent)
-            attr_noun_content_reobjs = list(reobj[1])
-            attr_noun_group_id = reobj[2][0]
-            field_value_group_id = reobj[2][1]
-            for match in matches:
-                struct = {}
-                attr_noun_idx_span = match.span(attr_noun_group_id)
-                field_value_idx_spans = [match.span(field_value_group_id)]
-                if i in self.patterns_with_multi_value_list_idx:
-                    field_value_idx_spans = get_multi_value_idx_spans(
-                        entities_sent, field_value_idx_spans[0], "<关联方>")
-                attr_noun_origin_str =attr_noun_dict[attr_noun_idx_span]
-                
-                for ro in attr_noun_content_reobjs:
-                    m = ro.search(attr_noun_origin_str)
-                    if m:
-                        field_name = self.attr_noun_pattern_to_field_name[m.re.pattern]
-                        if field_name == "investors":
-                            struct["investors"] = field_value_idx_spans
-                            struct["is_leading_investor"] = False
-                        elif field_name == "leading_investors":
-                            struct["investors"] = field_value_idx_spans
-                            struct["is_leading_investor"] = True
-                        elif field_name == "finacial_advisers":
-                            struct["finacial_advisers"] = field_value_idx_spans
-                        else:
-                            struct[field_name] = field_value_idx_spans[0]
-                        struct["attr_noun"] = attr_noun_idx_span
-                if len(struct) > 0:
-                    mr = {"struct": struct}
-                    mr["match_span"] = match.span()
-                    mr["from_rule"] = "Rule4"
-                    match_result.append(mr)
-        return match_result
-
-# 与金额相关的属性名词的匹配规则
-class AmountAttrNounRule(SuperRule):
-    def __init__(self):
-        super().__init__()
-        self.pattern = "".join([self.financing_company_pattern[0], r"?的?", self.attr_noun_pattern[0], r"(?:已|将)?(?:达到?|为)?了?",self.deal_size_pattern[0]])
-        self.reobj = re.compile(self.pattern)
         
-    def construct(self, entities_sent: str, attr_noun_dict: dict):
-        return super().construct(entities_sent, attr_handler=lambda m: self.attr_reobj.search(attr_noun_dict[m.span(self.attr_noun_pattern[1])]))
+    def __call__(self, entities_sent: str, attr_noun_dict: dict):
+        return self.construct(entities_sent)
 
-class RoleAttrNounRuleMatchResult:
-    def __init__(self) -> None:
-        self.match_result = []
-        pass
+# class Rule4(SuperRule):
+#     def __init__(self):
+#         super().__init__()
+#         # <融资方标签><关联方>连续完成<属性名词><金额>的<交易类型>与<交易类型>
+#         self.patterns_for_attr_noun = [r"(?:总|整体|累计)?融资(?:总?金?额|规模|累计金?额)|规模", r"投前估值", r"后估值", r"估值",
+#                                        r"投资方|投资人|投资者|投资机构|参投|跟投", r"领投方?|领投机构", r"财务顾问|融资顾问"]
+#         self.patterns_for_sentence = [
+#             (r"(<属性名词>)(?:已|将)?(?:达到?|为)?了?(<金额>)",
+#              self.patterns_for_attr_noun[:4], (1, 2)),
+#             (r"(<属性名词>)还?(?:主要)?(?:为|是|有|囊括|包括|涉及|包?含)((?:(?:<属性名词>的?)?(?:<关联方>)(?:、|和|以?及)?)+)",
+#              self.patterns_for_attr_noun[4:], (1, 2)),
+#             (r"(<属性名词>)的?((?:(?:<属性名词>的?)?(?:<关联方>)(?:、|和|以?及)?)+)",
+#              self.patterns_for_attr_noun[5:], (1, 2)),
+#             (r"((?:(?:<属性名词>的?)?(?:<关联方>)(?:、|和|以?及)?)+)等?(?:作为|在内的|等|则是|则以|(?:继续)?担?任)(<属性名词>)",
+#              self.patterns_for_attr_noun[4:], (2, 1))
+#         ]
+#         self.patterns_with_multi_value_list_idx = {1, 2, 3}
+#         self.field_name_with_multi_value = {
+#             "investors", "leading_investors", "finacial_advisers"}
+#         self.reobjs = [(re.compile(i[0]), [re.compile(j)
+#                         for j in i[1]], i[2]) for i in self.patterns_for_sentence]
+#         self.attr_noun_pattern_to_field_name = {
+#             self.patterns_for_attr_noun[0]: "deal_size",
+#             self.patterns_for_attr_noun[1]: "pre_money_valuation",
+#             self.patterns_for_attr_noun[2]: "post_money_valuation",
+#             self.patterns_for_attr_noun[3]: "valuation",
+#             self.patterns_for_attr_noun[4]: "investors",
+#             self.patterns_for_attr_noun[5]: "leading_investors",
+#             self.patterns_for_attr_noun[6]: "finacial_advisers"
+#         }
 
-# 与投资者和财务顾问相关的匹配规则
-class Rule19(SuperRule):
-    def __init__(self):
-        super().__init__()
-        # r"(<属性名词>)的?((?:(?:<属性名词>的?)?(?:<关联方>)(?:、|和|以?及)?)+)"
-        self.pattern = "".join([self.attr_noun_pattern[0], r"的?",self.investors_pattern[0]])
-        self.reobj = re.compile(self.pattern)
-        self.attr_reobjs = [
-            re.compile(r"财务顾问|融资顾问"),
-            re.compile(r"领投方?|领投机构")
-        ]
-    def construct(self, entities_sent: str, attr_noun_dict: dict):
-        mr = []
-        is_leading_investor = False
-        for i, attr_reobj in enumerate(self.attr_reobjs):
-            if i == 1:
-                is_leading_investor = True
-            mr += super().construct(entities_sent, is_leading_investor, attr_handler=lambda m: attr_reobj.search(attr_noun_dict[m.span(self.attr_noun_pattern[1])]))
-        return mr
-
-# 与投资者和财务顾问相关的匹配规则
-class Rule18(SuperRule):
-    def __init__(self):
-        super().__init__()
-        # (r"(<属性名词>)还?(?:主要)?(?:为|是|有|囊括|包括|涉及|包?含)((?:(?:<属性名词>的?)?(?:<关联方>)(?:、|和|以?及)?)+)",
-        self.pattern = "".join([self.attr_noun_pattern[0], r"还?(?:主要)?(?:为|是|有|囊括|包括|涉及|包?含)",self.investors_pattern[0]])
-        self.reobj = re.compile(self.pattern)
-        self.attr_reobjs = [
-            re.compile(r"投资方|投资人|投资者|投资机构|参投|跟投"),
-            re.compile(r"领投方?|领投机构"),
-            re.compile(r"财务顾问|融资顾问")
-        ]
-    def construct(self, entities_sent: str, attr_noun_dict: dict):
-        mr = []
-        is_leading_investor = False
-        for i, attr_reobj in enumerate(self.attr_reobjs):
-            if i == 1:
-                is_leading_investor = True
-            mr += super().construct(entities_sent, is_leading_investor, attr_handler=lambda m: attr_reobj.search(attr_noun_dict[m.span(self.attr_noun_pattern[1])]))
-        return mr
-
-class Rule20(SuperRule):
-    def __init__(self):
-        super().__init__()
-        # r"((?:(?:<属性名词>的?)?(?:<关联方>)(?:、|和|以?及)?)+)等?(?:作为|在内的|等|则是|则以|(?:继续)?担?任)(<属性名词>)        self.pattern = "".join([self.attr_noun_pattern[0], r"还?(?:主要)?(?:为|是|有|囊括|包括|涉及|包?含)",self.investors_pattern[0]])
-        self.pattern = self.investors_pattern + r"(?:作为|在内的|等|则是|则以|(?:继续)?担?任)" + self.attr_noun_pattern
-        self.reobj = re.compile(self.pattern)
-        self.attr_reobjs = [
-            re.compile(r"投资方|投资人|投资者|投资机构|参投|跟投"),
-            re.compile(r"领投方?|领投机构"),
-            re.compile(r"财务顾问|融资顾问")
-        ]
-    def construct(self, entities_sent: str, attr_noun_dict: dict):
-        mr = []
-        is_leading_investor = False
-        for i, attr_reobj in enumerate(self.attr_reobjs):
-            if i == 1:
-                is_leading_investor = True
-            mr += super().construct(entities_sent, is_leading_investor, attr_handler=lambda m: attr_reobj.search(attr_noun_dict[m.span(self.attr_noun_pattern[1])]))
-        return mr
+#     def __call__(self, entities_sent: str, attr_noun_dict: dict):
+#         match_result = []
+#         for i, reobj in enumerate(self.reobjs):
+#             matches = reobj[0].finditer(entities_sent)
+#             attr_noun_content_reobjs = list(reobj[1])
+#             attr_noun_group_id = reobj[2][0]
+#             field_value_group_id = reobj[2][1]
+#             for match in matches:
+#                 struct = {}
+#                 attr_noun_idx_span = match.span(attr_noun_group_id)
+#                 field_value_idx_spans = [match.span(field_value_group_id)]
+#                 if i in self.patterns_with_multi_value_list_idx:
+#                     field_value_idx_spans = get_multi_value_idx_spans(
+#                         entities_sent, field_value_idx_spans[0], "<关联方>")
+#                 attr_noun_origin_str =attr_noun_dict[attr_noun_idx_span]
+                
+#                 for ro in attr_noun_content_reobjs:
+#                     m = ro.search(attr_noun_origin_str)
+#                     if m:
+#                         field_name = self.attr_noun_pattern_to_field_name[m.re.pattern]
+#                         if field_name == "investors":
+#                             struct["investors"] = field_value_idx_spans
+#                             struct["is_leading_investor"] = False
+#                         elif field_name == "leading_investors":
+#                             struct["investors"] = field_value_idx_spans
+#                             struct["is_leading_investor"] = True
+#                         elif field_name == "finacial_advisers":
+#                             struct["finacial_advisers"] = field_value_idx_spans
+#                         else:
+#                             struct[field_name] = field_value_idx_spans[0]
+#                         struct["attr_noun"] = attr_noun_idx_span
+#                 if len(struct) > 0:
+#                     mr = {"struct": struct}
+#                     mr["match_span"] = match.span()
+#                     mr["from_rule"] = "Rule4"
+#                     match_result.append(mr)
+#         return match_result
 
 class Rule5(SuperRule):
     def __init__(self):
@@ -202,7 +139,6 @@ class Rule5(SuperRule):
         
     def __call__(self, entities_sent: str, attr_noun_dict: dict):
         return self.construct(entities_sent)
-
     
 class Rule6(SuperRule):
     def __init__(self):
@@ -306,7 +242,7 @@ class Rule12(SuperRule):
 class Rule13(SuperRule):
     def __init__(self):
         super().__init__()
-        self.pattern = "".join([r"(?:完成|获得?)", self.investors_pattern[0], self.anychar_notag_pattern, self.may_be_deal_size_pattern[0], self.deal_type_pattern])
+        self.pattern = "".join([r"(?:完成|获得?)", self.investors_pattern[0], self.anychar_notag_pattern, self.may_be_deal_size_pattern[0], r"的?", self.deal_type_pattern])
         self.reobj = re.compile(self.pattern)
         self.field_name2tag_name = {
             "investors": self.investors_pattern[1],
@@ -319,19 +255,6 @@ class Rule13(SuperRule):
 class Rule14(SuperRule):
     def __init__(self):
         super().__init__()
-        self.pattern = "".join([self.full_financing_company_pattern[0], self.anychar_notag_pattern, "，"])
-        self.reobj = re.compile(self.pattern)
-        self.field_name2tag_name = {
-            "business_profile": self.financing_company_pattern[1], 
-            "financing_company": self.financing_company_pattern[2], 
-        }
-        
-    def __call__(self, entities_sent: str, attr_noun_dict: dict):
-        return self.construct(entities_sent)
-    
-class Rule15(SuperRule):
-    def __init__(self):
-        super().__init__()
         self.pattern = "".join([self.financing_company_pattern[0], self.anychar_notag_pattern, r"宣布|获|完成", 
                                 self.anychar_notag_pattern, r"[，；]", self.anychar_notag_pattern, self.deal_type_pattern])
         self.reobj = re.compile(self.pattern)
@@ -342,6 +265,19 @@ class Rule15(SuperRule):
         
     def __call__(self, entities_sent: str, attr_noun_dict: dict):
         return self.construct(entities_sent)
+    
+# 与金额相关的属性名词的匹配规则
+class AmountAttrNounRule(SuperRule):
+    def __init__(self):
+        super().__init__()
+        self.pattern = "".join([self.financing_company_pattern[0], r"?的?", self.attr_noun_pattern[0], r"(?:已|将)?(?:达到?|为)?了?",self.deal_size_pattern[0]])
+        self.reobj = re.compile(self.pattern)
+    
+    def construct(self, entities_sent: str, attr_noun_dict: dict):
+        def f(m):
+            search_result = self.attr_reobj.search(attr_noun_dict[m.span(self.attr_noun_pattern[1])])
+            return [(i,search_result) for i in self.field_name2tag_name]
+        return super().construct(entities_sent, attr_handler=f)
 
 class Rule15(AmountAttrNounRule):
     def __init__(self):
@@ -350,12 +286,15 @@ class Rule15(AmountAttrNounRule):
         self.field_name2tag_name = {
             "business_profile": self.financing_company_pattern[1], 
             "financing_company": self.financing_company_pattern[2], 
-            "deal_size": self.deal_size_pattern[1]
+            "deal_size": self.deal_size_pattern[1],
+            "attr_noun": self.attr_noun_pattern[1]
         }
         
     def __call__(self, entities_sent: str, attr_noun_dict: dict):
         # attr_noun_origin_str =attr_noun_dict[attr_noun_idx_span]
-        return super().construct(entities_sent, attr_noun_dict)
+        res = super().construct(entities_sent, attr_noun_dict)
+        print("res: ", res)
+        return res
 
 class Rule16(AmountAttrNounRule):
     def __init__(self):
@@ -364,7 +303,8 @@ class Rule16(AmountAttrNounRule):
         self.field_name2tag_name = {
             "business_profile": self.financing_company_pattern[1], 
             "financing_company": self.financing_company_pattern[2], 
-            "post_money_valuation": self.deal_size_pattern[1]
+            "post_money_valuation": self.deal_size_pattern[1],
+            "attr_noun": self.attr_noun_pattern[1]
         }
         
     def __call__(self, entities_sent: str, attr_noun_dict: dict):
@@ -378,9 +318,91 @@ class Rule17(AmountAttrNounRule):
         self.field_name2tag_name = {
             "business_profile": self.financing_company_pattern[1], 
             "financing_company": self.financing_company_pattern[2], 
-            "pre_money_valuation": self.deal_size_pattern[1]
+            "pre_money_valuation": self.deal_size_pattern[1],
+            "attr_noun": self.attr_noun_pattern[1]
         }
         
     def __call__(self, entities_sent: str, attr_noun_dict: dict):
         # attr_noun_origin_str =attr_noun_dict[attr_noun_idx_span]
         return super().construct(entities_sent, attr_noun_dict)
+
+# 与投资者和财务顾问相关的匹配规则
+class Rule18(SuperRule):
+    def __init__(self):
+        super().__init__()
+        # (r"(<属性名词>)还?(?:主要)?(?:为|是|有|囊括|包括|涉及|包?含)((?:(?:<属性名词>的?)?(?:<关联方>)(?:、|和|以?及)?)+)",
+        self.pattern = "".join([self.attr_noun_pattern[0], r"还?(?:主要)?(?:为|是|有|囊括|包括|涉及|包?含)",self.investors_pattern[0]])
+        self.reobj = re.compile(self.pattern)
+        self.attr_reobjs2field_name = {
+            re.compile(r"投资方|投资人|投资者|投资机构|参投|跟投"): "investors",
+            re.compile(r"领投方?|领投机构"): "investors",
+            re.compile(r"财务顾问|融资顾问"): "finacial_advisers"
+        }
+        self.field_name2tag_name = {
+            "attr_noun": self.attr_noun_pattern[1]
+        }
+    def __call__(self, entities_sent: str, attr_noun_dict: dict):
+        mr = []
+        i = 0
+        for attr_reobj, field_name in self.attr_reobjs2field_name.items():
+            is_leading_investor = i == 1
+            self.field_name2tag_name[field_name] = self.investors_pattern[1]
+            def f(m):
+                sr = attr_reobj.search(attr_noun_dict[m.span(self.attr_noun_pattern[1])])
+                return [(field_name, sr), ("attr_noun", sr)]
+            i += 1
+            mr += super().construct(entities_sent, is_leading_investor, attr_handler=f)
+        return mr
+
+# 与投资者和财务顾问相关的匹配规则
+class Rule19(SuperRule):
+    def __init__(self):
+        super().__init__()
+        # r"(<属性名词>)的?((?:(?:<属性名词>的?)?(?:<关联方>)(?:、|和|以?及)?)+)"
+        self.pattern = "".join([self.attr_noun_pattern[0], r"的?",self.investors_pattern[0]])
+        self.reobj = re.compile(self.pattern)
+        self.attr_reobjs2field_name = {
+            re.compile(r"财务顾问|融资顾问"): "finacial_advisers",
+            re.compile(r"领投方?|领投机构"): "investors"
+        }
+        self.field_name2tag_name = {
+            "attr_noun": self.attr_noun_pattern[1]
+        }
+    def __call__(self, entities_sent: str, attr_noun_dict: dict):
+        mr = []
+        for attr_reobj, field_name in self.attr_reobjs2field_name.items():
+            self.field_name2tag_name[field_name] = self.investors_pattern[1]
+            def f(m):
+                sr = attr_reobj.search(attr_noun_dict[m.span(self.attr_noun_pattern[1])])
+                return [(field_name, sr), ("attr_noun", sr)]
+            mr += super().construct(entities_sent, True, attr_handler=f)
+        return mr
+
+# 与投资者和财务顾问相关的匹配规则
+class Rule20(SuperRule):
+    def __init__(self):
+        super().__init__()
+        # r"((?:(?:<属性名词>的?)?(?:<关联方>)(?:、|和|以?及)?)+)等?(?:作为|在内的|等|则是|则以|(?:继续)?担?任)(<属性名词>)        self.pattern = "".join([self.attr_noun_pattern[0], r"还?(?:主要)?(?:为|是|有|囊括|包括|涉及|包?含)",self.investors_pattern[0]])
+        self.pattern = self.investors_pattern[0] + r"(?:作为|在内的|等|则是|则以|(?:继续)?担?任)" + self.attr_noun_pattern[0]
+        self.reobj = re.compile(self.pattern)
+        self.attr_reobjs2field_name = {
+            re.compile(r"投资方|投资人|投资者|投资机构|参投|跟投"): "investors",
+            re.compile(r"领投方?|领投机构"): "investors",
+            re.compile(r"财务顾问|融资顾问"): "finacial_advisers"
+        }
+        self.field_name2tag_name = {
+            "attr_noun": self.attr_noun_pattern[1]
+        }
+    def __call__(self, entities_sent: str, attr_noun_dict: dict):
+        mr = []
+        i=0
+        for attr_reobj, field_name in self.attr_reobjs2field_name.items():
+            is_leading_investor = i == 1
+            self.field_name2tag_name[field_name] = self.investors_pattern[1]
+            def f(m):
+                sr = attr_reobj.search(attr_noun_dict[m.span(self.attr_noun_pattern[1])])
+                return [(field_name, sr), ("attr_noun", sr)]
+            i += 1
+            mr += super().construct(entities_sent, is_leading_investor, attr_handler=f)
+        return mr
+

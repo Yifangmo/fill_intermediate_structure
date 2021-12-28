@@ -18,25 +18,47 @@ class SuperRule(object):
     def construct(self, entities_sent: str, is_leading_investor: bool = False, attr_handler: Callable = None):
         matches = self.reobj.finditer(entities_sent)
         match_result = []
-        for m in matches:
-            if attr_handler and not attr_handler(m):
-                continue
-            struct = {}
-            for field_name, tag_name in self.field_name2tag_name.items():
-                sp = m.span(tag_name)
-                if sp == (-1, -1):
-                    continue
-                if field_name == "investors":
-                    primary_names = get_multi_value_idx_spans(entities_sent, sp, "<关联方>")
-                    struct["investors"] = primary_names
-                    struct["is_leading_investor"] = is_leading_investor
-                    continue
-                struct[field_name] = sp
-            if len(struct) > 0:
-                mr = {"struct": struct}
-                mr["match_span"] = m.span()
-                mr["from_rule"] = self.__class__.__name__
-                match_result.append(mr)
+        if attr_handler:
+            for m in matches:
+                struct = {}
+                res = attr_handler(m)
+                for r in res:
+                    if r[1]:
+                        sp = m.span(self.field_name2tag_name[r[0]])
+                        if sp != (-1,-1):
+                            if r[0] == "investors":
+                                struct["investors"] = get_multi_value_idx_spans(entities_sent, sp, "<关联方>")
+                                struct["is_leading_investor"] = is_leading_investor
+                                continue
+                            if r[0]== "finacial_advisers":
+                                struct["finacial_advisers"] = get_multi_value_idx_spans(entities_sent, sp, "<关联方>")
+                                continue
+                            struct[r[0]] = sp
+                    else:
+                        break
+                if len(struct) > 0:
+                    mr = {"struct": struct}
+                    mr["match_span"] = m.span()
+                    mr["from_rule"] = self.__class__.__name__
+                    match_result.append(mr)
+        else:
+            for m in matches:
+                struct = {}
+                for field_name, tag_name in self.field_name2tag_name.items():
+                    sp = m.span(tag_name)
+                    if sp == (-1, -1):
+                        continue
+                    if field_name == "investors":
+                        primary_names = get_multi_value_idx_spans(entities_sent, sp, "<关联方>")
+                        struct["investors"] = primary_names
+                        struct["is_leading_investor"] = is_leading_investor
+                        continue
+                    struct[field_name] = sp
+                if len(struct) > 0:
+                    mr = {"struct": struct}
+                    mr["match_span"] = m.span()
+                    mr["from_rule"] = self.__class__.__name__
+                    match_result.append(mr)
         return match_result
 
 def get_multi_value_idx_spans(entities_sent: str, pos_span: tuple, match_for: str):

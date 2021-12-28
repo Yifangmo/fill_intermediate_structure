@@ -45,6 +45,8 @@ class Merge(object):
         self.default_filter = lambda i:sorted(i, reverse=True)[0]
     
     def handle(self, arg, keys: Iterable[str], filters_dict: dict):
+        if len(arg) == 0:
+            return None
         res = None
         for k in keys:
             if not isinstance(k, str):
@@ -221,8 +223,6 @@ arg = [
         "deal_type": "B1轮融资"
     }
 ]
-
-print(Merge().handle(arg, ['deal_type', 'investors.primary_name', 'financing_company.primary_name'], {'financing_company.full_name': f}))
 
 '''
 处理交易类型：
