@@ -733,6 +733,7 @@ def test_merge():
 
 def test_gen():
     obj = ede("Spectricity宣布完成1400万欧元（1600万美元）B轮融资，浦科投资管理的上海半导体装备材料产业投资基金（简称“上海半导体装备材料基金”）作为重要投资方，参与了该轮融资。")
+    obj = ede("亿欧数据显示，截至目前，云快充已完成4轮融资，投资方包括宁德时代、合力资本、财信金控旗下财信产业基金、隐山资本与际链科技等。")
     # print("original_index2entities: ", obj["original_index2entities"])
     # print()
     # del obj["original_index2entities"]
