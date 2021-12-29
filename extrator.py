@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 from re import I
-from merge_engine import Merge
+from merge_engine import MergeEngine
 import requests
 import json
 import re
@@ -157,20 +157,20 @@ def normalize_sentence(sent: str):
 
 
 class EntitiesDictExtrator(object):
-    def __init__(self, *funcs):
+    def __init__(self, *rules):
         self.validate_deal_type_reobj = re.compile(
             (
-                r"((Pre-)?[A-H]\d?|天使|种子|战略|IPO|新一|两|三|四|五|上一?|首)(\++|＋+|plus)?((系列)?(轮|次)|系列)(([融投]资|投融资)(?!人|者|方|机构))|"
-                r"(天使|种子|战略|风险|IPO|股权)([融投]资|投融资)(?!人|者|方|机构)|"
+                r"(((pre-)?[A-H]\d?(\++|＋+|plus)?)|天使|种子|战略|新一|IPO)(轮|系列轮|系列(?!轮))((?![融投]资|投融资)|([融投]资|投融资)(?!人|者|方|机构))|"
+                r"(上一?|首|两|三|四|五)轮((?![融投]资|投融资)|(([融投]资|投融资)(?!人|者|方|机构)))|"
+                r"(天使|种子|战略|风险|IPO|股权|新一|上一|(新一|上一?|首|两|三|四|五)次)([融投]资|投融资)(?!人|者|方|机构)|"
                 r"(本|此|该)(轮|次)([融投]资|投融资)|"
                 r"[融投]资(?!人|者|方|机构)"
             ), re.I
         )
-        self.validate_attr_noun_reobj = re.compile(r"(?:总|整体|累计)?融资(?:总?金?额|规模|累计金?额)|投前估值|后估值|估值|投资方|投资人|投资者|投资机构|领投方|领投机构|财务顾问|融资顾问")
         self.repl_deal_type_reobj = re.compile(r"(轮|次|笔|轮战略|系列轮?)?(投资|融资)|投融资")
         self.date_reobj = re.compile(r"\d{1,2}月\d{1,2}日|年\d{1,2}月")
         self.verb_reobj = re.compile(r"获|完成")
-        self.func_a = funcs
+        self.rules = rules
         
     # 返回clause_idx_span到实际交易事件和时间的映射
     def get_span_dict(self, sentence_struct_info: dict):
@@ -184,29 +184,49 @@ class EntitiesDictExtrator(object):
             label_content = sent[li[0]:li[1]]
             if li[2] == "交易类型":
                 repl_dt = self.repl_deal_type_reobj.sub("", label_content)
-                # 励销云宣布完成新一轮2000万美元B轮融资
-                if i > 1 and labels_indexes[i-1][2]=="金额" and labels_indexes[i-2][2]=="交易类型":
-                    if re.search(r"[A-Za-z]", repl_dt):
-                        pre_label_dt_content = sent[labels_indexes[i-2][0]:labels_indexes[i-2][1]]
-                        label_dt2repl_dt[(li[0],li[1])] = repl_dt
-                        # 删除原有的repl_dt，避免同一交易事件（real_dt）有多个repl_dt
-                        if (labels_indexes[i-2][0], labels_indexes[i-2][1]) in label_dt2repl_dt:
-                            del repl_dt2real_dt[label_dt2repl_dt[(labels_indexes[i-2][0], labels_indexes[i-2][1])]]
-                        label_dt2repl_dt[(labels_indexes[i-2][0], labels_indexes[i-2][1])] = repl_dt
-                        repl_dt2real_dt[repl_dt] = pre_label_dt_content+label_content
-                    elif repl_dt!="":
-                        label_dt2repl_dt[(li[0],li[1])] = label_dt2repl_dt[(labels_indexes[i-2][0], labels_indexes[i-2][1])] \
-                            if (labels_indexes[i-2][0], labels_indexes[i-2][1]) in label_dt2repl_dt else repl_dt
-                    continue
                 # 此类交易类型实体只用于匹配模板来获取融资方信息，不作为实际交易事件，也不为之划分span
                 if re.search(r"两|三|四|五|(?<![a-zA-Z])\d", repl_dt):
                     continue
+                # 励销云宣布完成新一轮2000万美元B轮融资
+                if i > 1 and labels_indexes[i-1][2]=="金额" and labels_indexes[i-2][2]=="交易类型":
+                    pre_label_dt_content = sent[labels_indexes[i-2][0]:labels_indexes[i-2][1]]
+                    pre_li_span = (labels_indexes[i-2][0], labels_indexes[i-2][1])
+                    if pre_li_span in label_dt2repl_dt:
+                        pre_repl_dt = label_dt2repl_dt[pre_li_span]
+                        # 新一轮2000万美元B轮融资
+                        if re.search(r"[A-Za-z]", repl_dt):
+                            print("-------------------------")
+                            # 将原有的 新一 替换为 B
+                            label_dt2repl_dt[(li[0],li[1])] = repl_dt
+                            label_dt2repl_dt[pre_li_span] = repl_dt
+                            # 删除原有的repl_dt，避免同一交易事件（real_dt）有多个repl_dt
+                            del repl_dt2real_dt[pre_repl_dt]
+                            # 将实际交易类型由新一轮替换为B轮融资
+                            if label_content.endswith("融资") or not pre_label_dt_content.endswith("融资"):
+                                repl_dt2real_dt[repl_dt] = label_content
+                        # B轮2000万美元新融资 | B轮2000万美元融资
+                        else:
+                            label_dt2repl_dt[(li[0],li[1])] = pre_repl_dt
+                            # 将实际交易类型由B轮替换为B轮融资
+                            if label_content.endswith("融资") and not pre_label_dt_content.endswith("融资"):
+                                repl_dt2real_dt[pre_repl_dt] = pre_label_dt_content + label_content
+                        continue
                 # "B+轮战略融资" 和 "B+轮投资"
                 if repl_dt in repl_dt2real_dt:
                     label_dt2repl_dt[(li[0], li[1])] = repl_dt
                     pre_real_dt = repl_dt2real_dt[repl_dt]
-                    real_dt = pre_real_dt if len(pre_real_dt) >= len(label_content) else label_content
-                    repl_dt2real_dt[repl_dt] = real_dt
+                    ult_real_dt = label_content
+                    # 优先取融资结尾的，再取长度更长的
+                    if pre_real_dt.endswith("融资"):
+                        ult_real_dt = pre_real_dt
+                    if pre_real_dt != label_content:
+                        if label_content.endswith("融资") and len(pre_real_dt) < len(label_content):
+                            ult_real_dt = label_content
+                    else:
+                        if len(pre_real_dt) >= len(label_content):
+                            ult_real_dt = pre_real_dt
+                    if ult_real_dt != pre_real_dt:
+                        repl_dt2real_dt[repl_dt] = ult_real_dt
                     continue
                 
                 if i > 0 and labels_indexes[i-1][2]=="金额" and li[0] - labels_indexes[i-1][1] < 2:
@@ -621,7 +641,7 @@ class EntitiesDictExtrator(object):
         attr_noun_dict = sentence_struct_info["attr_noun_dict"]
 
         match_result = []
-        for func in self.func_a:
+        for func in self.rules:
             match_result += func(entities_sent, attr_noun_dict)
         sentence_struct_info["match_result"] = match_result
         
@@ -632,149 +652,3 @@ class EntitiesDictExtrator(object):
         return sentence_struct_info
 
 ede = EntitiesDictExtrator(*[i[1]() for i in inspect.getmembers(rules, inspect.isclass) if i[0].startswith("Rule")])
-
-def test(rule, result):
-    entities_sent = result["entities_sent"]
-    r = rule()
-    tr = r.reobj.search(entities_sent)
-    print("r.reobj: ", r.reobj)
-    print(rule.__name__, " test result", tr)
-
-def printlog(field_name :str, value):
-    print(field_name + ": ", value)
-    # <关联方>就获<关联方>和<关联方><金额>的<交易类型>
-# (?:完成|获得?)(?P<i>(?:(?:<属性名词>的?)?(?:<关联方>)(?:、|和|以?及)?)+)等?(?:机构|基金|则?(?:以|作为)?(?:<属性名词>))?[^，；<>]*?(?P<ds><金额>)?<交易类型>
-class MergeNews():
-    def __init__(self):
-        self.repl_deal_type_reobj = re.compile(r"(轮|次|笔|轮战略|系列轮?)?(投资|融资)|投融资")
-        self.refer_deal_type_reobj = re.compile(r"(本|此|该)")
-        self.keys = ['deal_type', 'investors.primary_name', 'financing_company.primary_name']
-        self.is_leading_investor_filter = lambda s : True in s
-        self.filters_dict={'investors.is_leading_investor': self.is_leading_investor_filter}
-        self.mergeengine = Merge()
-        pass
-    
-    def merge(self, match_result):
-        deal_type2match_result = {}
-        refer_deal_type2match_result = {}
-        repl_dt_map = {}
-        dt_tmp = None
-        for mr in match_result:
-            if "deal_type" not in mr:
-                if None in refer_deal_type2match_result:
-                    refer_deal_type2match_result[None].append(mr)
-                else:
-                    refer_deal_type2match_result[None] = [mr]
-            dt = mr["deal_type"]
-            if dt in deal_type2match_result:
-                deal_type2match_result[dt].append(mr)
-            elif dt in refer_deal_type2match_result:
-                refer_deal_type2match_result[dt].append(mr)
-            else:
-                if self.refer_deal_type_reobj.search(dt):
-                    refer_deal_type2match_result[dt] = [mr]
-                else:
-                    dt_tmp = dt
-                    repl_dt = self.repl_deal_type_reobj.sub("",dt)
-                    # print("repl_dt: ", repl_dt)
-                    # print("repl_dt_map: ", repl_dt_map)
-                    if repl_dt in repl_dt_map:
-                        pre_dt = repl_dt_map[repl_dt]
-                        ult_dt = None
-                        if len(pre_dt) > len(dt):
-                            ult_dt = pre_dt
-                        elif len(pre_dt) < len(dt):
-                            ult_dt = dt
-                        else:
-                            if dt.endswith("融资"):
-                                ult_dt = dt
-                            else:
-                                ult_dt = pre_dt
-                        if ult_dt == pre_dt:
-                            mr["deal_type"] = ult_dt
-                            deal_type2match_result[ult_dt].append(mr)
-                        else:
-                            pre_mr = deal_type2match_result[pre_dt]
-                            del deal_type2match_result[pre_dt]
-                            for mr in pre_mr:
-                                mr["deal_type"] = ult_dt
-                            pre_mr.append(mr)
-                            deal_type2match_result[ult_dt] = pre_mr
-                            repl_dt_map[repl_dt] = ult_dt
-                    else:
-                        repl_dt_map[repl_dt] = dt
-                        deal_type2match_result[dt] = [mr]
-        if len(deal_type2match_result) == 1 and len(refer_deal_type2match_result) != 0:
-            for dt, mr in refer_deal_type2match_result.items():
-                for r in mr:
-                    r["deal_type"] = dt_tmp
-                deal_type2match_result[dt_tmp] += mr
-                
-        merge_result = self.mergeengine.handle(list(deal_type2match_result.values()), self.keys, self.filters_dict)
-        return merge_result
-    
-mergenews = MergeNews()
-
-def test_merge():
-    sents = [
-        "上半年湖南省完成交通固定资产投资419.69亿元 投资总额和完成比例均为历史同期最高水平",
-        "红网时刻7月21日讯（记者 曾拥璇 实习生 钟冬梅 通讯员 袁东伟 杨红伟）今日，记者从湖南省交通运输厅获悉，1-6月，湖南省完成交通固定资产投资419.69亿元，同比2020年、2019年分别增长65.73%、108.83%，为年度目标的51.94%，超原定40%计划目标近12个百分点，投资总额和完成比例均为历史同期最高水平。"
-        # "投资界（ID：pedaily2012）8月12日消息，近日，致力于为移动和消费类设备提供高光谱传感解决方案的全球领先供应商—比利时Spectricity宣布完成1400万欧元（1600万美元）B轮融资，浦科投资管理的上海半导体装备材料产业投资基金（简称“上海半导体装备材料基金”）作为重要投资方，参与了该轮融资。"
-    ]
-    strus = []
-    for s in sents:
-        obj = ede(s)
-        print(obj)
-        for mr in obj["match_result"]:
-            strus.append(mr["struct"])
-    merged = mergenews.merge(strus)
-    print(merged)
-    pass
-
-def test_gen():
-    obj = ede("Spectricity宣布完成1400万欧元（1600万美元）B轮融资，浦科投资管理的上海半导体装备材料产业投资基金（简称“上海半导体装备材料基金”）作为重要投资方，参与了该轮融资。")
-    obj = ede("亿欧数据显示，截至目前，云快充已完成4轮融资，投资方包括宁德时代、合力资本、财信金控旗下财信产业基金、隐山资本与际链科技等。")
-    # print("original_index2entities: ", obj["original_index2entities"])
-    # print()
-    # del obj["original_index2entities"]
-    print(obj)
-    # test(rules.Rule13, obj)
-    pass
-
-if __name__ == "__main__":
-    test_merge()
-    # test_gen()
-    # 多分句共用关联方
-    # obj = call("9月1日消息，近日，教育机器人及STEAM玩教具公司LANDZO蓝宙科技宣布，公司已于6月完成A轮1.89亿元融资，投资方为至临资本、文化产业上市资方、中视金桥、南京市政府基金，庚辛资本担任长期独家财务顾问。")
-    # obj = call("投资界（ID：pedaily2012）5月11日消息，近期，上海九穗农业科技有限公司（以下简称：米小芽），再次获得数千万A轮融资，由老股东新梅资本领投。")
-    # obj = call("业内人士分析，在目前市场偏于谨慎的投资环境下，金智维逆势完成融资，再获逾2亿元资本加持")
-    
-    # 属性名词问题
-    # obj = call("还有市场消息称，L catterton、淡马锡跟投，此外高榕、龙湖等多位老股东也继续跟投，本轮投后元气森林估值达60亿美元，短短一年之内大涨约三倍。")
-
-    # 标题空格
-    # obj = call("高精度工业机器人制造商“若贝特”获数千万人民币A+轮融资")
-    
-    # 新增模板
-    # obj = call("投资方为贝塔斯曼亚洲投资基金（领投）。")
-    # obj = call("本轮融资由钟鼎资本领投、厦门建发新兴投资、三奕资本联合参投，君联资本和德宁资本等老股东超额跟投。")
-    
-    # 战略投资是名词还是动词
-    # obj = call("证券时报e公司讯，追觅科技宣布完成36亿元C轮融资，由华兴新经济基金等领投，碧桂园创投战略投资，老股东小米集团等追加投资。")
-
-    # obj = call("36氪了解到，“简爱酸奶”于近日完成总计8亿元人民币B轮融资，老股东经纬中国、黑蚁资本、中信农业基金、麦星资本继续加码，新进股东为红杉中国、云锋基金、璞瑞投资基金、德弘资本，本轮融资将全部用于现代化牧场建设，持续发力供应链。")
-    # obj = call("猎云网近日获悉，浙江正泰安能电力系统工程有限公司（以下简称“正泰安能”）宣布完成人民币10亿元战略融资，长期战略合作伙伴--鋆（yún）昊资本(Cloudview Capital)作为领投方投资人民币2.4亿元，")
-    # obj = call("公开资料显示，2011年初咕咚获得盛大集团天使轮数千万元投资，随后的2014年3月，咕咚获得深创投领投、中信资本跟投的1000万美元A轮融资；同年11月，咕咚又获得由SIG和软银共同投资的3000万美元B轮融资。")
-    # obj = call("8月31日晚间，外媒 The Information 报道，知情人士透露，亚洲初创公司极兔速递（J&T Express ）正在与腾讯及其他投资者进行融资洽谈，融资金额逾10亿美元，投前估值200亿美元。")
-    # obj = call("8月25日，极客网了解到，劢微机器人获得数千万人民币A+轮融资，信天创投领投，plug and play、梅花创投参投。")
-    # obj = call("据悉，乐播投屏此前曾于2015年获得赛马资本的天使轮融资，2016年获得金沙江联合资本的A轮融资，2017年11月获前海母基金，暴龙资本领投，博将资本、易合资本联合参投的A+轮融资。")
-    # obj = call("业内人士分析，在目前市场偏于谨慎的投资环境下，金智维逆势完成融资，再获逾2亿元资本加持，证明其强大的自主研发能力、以用户为本的产品理念、金融行业的高渗透率以及可持续发展的商业模式，得到广泛的验证和认可。")
-    # obj = call("去年5月，该公司在由Saama Capital领投的A轮融资中筹集了590万美元。")
-    # obj = call("华米科技240万美元领投neuro42 A轮融资")
-    # obj = call("投资界7月28日消息，中国本土原浆啤酒品牌泰山啤酒完成新一轮融资，由中信系投资平台信金资本独家战略加持。")
-    # obj = call("日前网通社获悉，威马汽车控股有限公司宣布，威马汽车预计将获得超过3亿美元的D1轮融资，本轮融资由电讯盈科有限公司（“电讯盈科”）和信德集团有限公司（“信德集团”）领投，参投方包括广发信德投资管理有限公司旗下美元投资机构等。")
-    # obj = call("据威马汽车官方介绍，本次获得的D1轮融资贷款，将用于威马汽车无人驾驶技术与其他智能化技术和产品研发，另外资金还将用于销售及服务渠道拓展等，另外锦沄资本和光源资本则以财务顾问身份参与本轮融资。")
-
-    # obj = call("根据CVSource投中数据，煲仔皇曾于2015年获0331创投百万级天使轮融资，2016年获真格基金、老鹰基金、星瀚资本千万级PreA轮融资，2017年获弘毅投资旗下百福控股数千万A轮融资。")
-    # obj = call("2021开年，B1轮融资发布不过4个月，奇点云再迎喜讯：于近日完成8000万元B2轮融资，字节跳动独家领投，老股东IDG资本跟投。")
-    # obj = ede("36氪获悉，饭乎于近期连续完成两轮融资，包括昕先资本（洽洽家族基金）投资的千万元级天使轮融资，以及联想之星领投和拙朴投资跟投的数千万元级A轮融资。")
