@@ -37,12 +37,15 @@ class MergeEngine(object):
             for k in keys:
                 if not isinstance(k, str):
                     raise TypeError("key's type must be str: {}".format(type(k)))
+            keys = {k:None for k in keys}
         elif isinstance(keys, dict):
             for key, wrapper in keys.items():
-                pass
+                if not isinstance(key, str):
+                    raise TypeError("key's type must be str: {}".format(type(key)))
+                if wrapper and not isinstance(wrapper(None), Hashable):
+                    raise TypeError("The key's wrapper should be Hashable: {}".format(key))
         else:
             raise TypeError("the type of keys must be dict or list: {}".format(type(keys)))
-        keys = set(keys)
         res = None
         if isinstance(arg, list):
             res = self.handle(arg, keys, filters_dict, None)
@@ -54,29 +57,31 @@ class MergeEngine(object):
         element_type = None
         current_keys = None
         if current_field:
-            current_keys = {i for i in keys if i.startswith(current_field+self.seperator)}
+            current_keys = {k:k.replace(current_field+self.seperator, '', 1) for k in keys if k.startswith(current_field+self.seperator)}
         else:
-            current_keys = {i for i in keys if self.seperator not in i}
-        for i in arg:
+            current_keys = {k:k for k in keys if self.seperator not in k}
+        for ele in arg:
             if not element_type:
-                element_type = type(i)
-            elif element_type != type(i):
-                raise TypeError("list element's type is not unified: {}, {}".format(element_type, type(i)))
+                element_type = type(ele)
+            elif element_type != type(ele):
+                raise TypeError("list element's type is not unified: {}, {}".format(element_type, type(ele)))
         if element_type in self.simple_type:
-            tmp_set = set({})
+            res_dict = set({})
             new_arg = []
-            for i in arg:
-                if i not in tmp_set:
-                    new_arg.append(i)
-                    tmp_set.add(i)
-            if len(tmp_set) > 1:
+            ck = current_keys[current_field]
+            k_wrapper = keys[ck]
+            for ele in arg:
+                wrapper_ele = k_wrapper(ele) if k_wrapper else ele
+                if wrapper_ele not in res_dict:
+                    new_arg.append(ele)
+                    res_dict.add(wrapper_ele)
+            if len(res_dict) > 1:
                 if current_field in filters_dict:
-                    tmp_set = filters_dict[current_field](new_arg)
+                    res = filters_dict[current_field](new_arg)
                 else:
-                    tmp_set = self.default_filter(new_arg)
+                    res = self.default_filter(new_arg)
             else:
-                tmp_set = arg.pop()
-            res = tmp_set
+                res = arg.pop()
         elif element_type == list:
             lst = []
             isHashable = True
@@ -89,40 +94,48 @@ class MergeEngine(object):
             pass
         elif element_type == dict:
             res = []
-            key_dict = {}
-            for i in arg:
-                for k in i:
+            kvalues2elements = {}
+            # 根据各个ele中的当前多个关键字的值的有序数列来对ele分类
+            for ele in arg:
+                # 检查dict每个键的类型
+                for k in ele:
                     if not isinstance(k, str):
                         raise TypeError("dict key's type must be str: {}".format(k))
                     if k.find(self.seperator) != -1:
                         raise ValueError('dict key can not contain dot: {}'.format(k))
-                keys_values = []
-                for k in current_keys:
-                    k = k.replace(current_field+self.seperator, '', 1) if current_field else k
-                    if k in i:
-                        if isinstance(i[k], Hashable):
-                            keys_values.append(i[k])
+                kvalues = []
+                # 遍历当前需要处理的关键字，ck是无前缀的关键字
+                for k, ck in current_keys.items():
+                    if ck in ele:
+                        # 如果当前关键字的值是可哈希的或者有可hash的包装类，就加入到关键字值有序数列中
+                        k_wrapper = keys[ck]
+                        if isinstance(ele[ck], Hashable) or k_wrapper:
+                            kvalue = k_wrapper(ele[ck]) if k_wrapper else ele[ck]
+                            kvalues.append(kvalue)
                         else:
-                            raise TypeError("key's value must be hashable: {}".format(k))
+                            raise TypeError("key's value must be hashable or have hashable wrapper: {}".format(k))
                     else:
-                        keys_values.append(None)
-                keys_values_tup = tuple(keys_values)
-                if keys_values_tup not in key_dict:
-                    key_dict[keys_values_tup] = [i]
+                        kvalues.append(None)
+                kvalues_tup = tuple(kvalues)
+                # 根据关键字值有序数列分组
+                if kvalues_tup not in kvalues2elements:
+                    kvalues2elements[kvalues_tup] = [ele]
                 else:
-                    key_dict[keys_values_tup].append(i)
-            for keys_values, objlist in key_dict.items():
-                tmp_set = {}
-                for obj in objlist:
-                    for k, v in obj.items():
-                        if k not in tmp_set:
-                            tmp_set[k] = [v]
+                    kvalues2elements[kvalues_tup].append(ele)
+            # 对分好组的eles融合
+            for kvalues, elements in kvalues2elements.items():
+                res_dict = {}
+                # 遍历组内ele
+                for ele in elements:
+                    for k, v in ele.items():
+                        if k not in res_dict:
+                            res_dict[k] = [v]
                         else:
-                            tmp_set[k].append(v)
-                for k, v in tmp_set.items():
+                            res_dict[k].append(v)
+                for k, v in res_dict.items():
                     field = self.seperator.join([current_field, k]) if current_field else k
-                    tmp_set[k] = self.handle(v, keys, filters_dict, field)
-                res.append(tmp_set)
+                    res_dict[k] = self.handle(v, keys, filters_dict, field)
+                res.append(res_dict)
             res = res if len(res) != 1 else res[0]
         else:
             raise TypeError("type is not supported: {}".format(element_type))

@@ -5,7 +5,11 @@ class Merger():
     def __init__(self):
         self.repl_deal_type_reobj = re.compile(r"(轮|次|笔|轮战略|系列轮?)?(投资|融资)|投融资")
         self.refer_deal_type_reobj = re.compile(r"(本|此|该)")
-        self.keys = ['deal_type', 'investors.primary_name', 'financing_company.primary_name']
+        self.keys = {
+            'deal_type': None, 
+            'investors.primary_name': PrimaryNameWrapper, 
+            'financing_company.primary_name': PrimaryNameWrapper
+        }
         self.is_leading_investor_filter = lambda s : True in s
         self.full_name_filter = MAX_LENGTH_FILTER
         self.deal_size = SAVE_ALL_FILTER
@@ -23,11 +27,6 @@ class Merger():
         print(match_result)
         merge_result = self.mergeengine(match_result, self.keys, self.filters_dict)
         return merge_result
-    
-    def merge_keys(self, match_result: list):
-        deal_type2match_result = self.merge_deal_type(match_result)
-        self.merge_primary_name(deal_type2match_result)
-        return 
 
     def merge_deal_type(self, match_result: list):
         deal_type2match_result = {}
@@ -104,8 +103,26 @@ class Merger():
                                     tmp_dt = dt
                 mr["deal_type"] = tmp_dt
                 deal_type2match_result[tmp_dt].append(mr)
-        return deal_type2match_result
+        res = []
+        for dt, mr in deal_type2match_result.items():
+            res += mr
+        return res
 
-    def merge_primary_name(self, deal_type2match_result: dict):
-        # deal_type2primary
-        pass
+class PrimaryNameWrapper(str):
+    def __init__(self, value: str):
+        self.value = value
+        
+    def __eq__(self, __o: object):
+        if self.value == __o.value:
+            return True
+        v1 = self.value.upper()
+        v2 = __o.value.upper()
+        if v1.find(v2) != -1 or v2.find(v1) != -1:
+            return True
+        return False
+    
+    def __hash__(self) -> int:
+        return 0
+    
+    def __str__(self) -> str:
+        return self.value

@@ -67,19 +67,27 @@ def test1():
     s[w2] = 2
     for k in s:
         print(k)
-        
+
 def test2(k: KT):
     if isinstance(k, (List, int)):
         print(True)
+    pass
+
+class A:
+    def __eq__(self, __o: object) -> bool:
+        pass
+    def __hash__(self) -> int:
+        return 0
     pass
 
 if __name__ == "__main__":
     # test_gen()
     # test_merge()
     # test1()
-    test2([])
-    print(type(list) , type(List))
-    
+    a = A()
+    # b = {a:1}
+    print(isinstance(A, Hashable))
+    pass
     
     # 多分句共用关联方
     # obj = call("9月1日消息，近日，教育机器人及STEAM玩教具公司LANDZO蓝宙科技宣布，公司已于6月完成A轮1.89亿元融资，投资方为至临资本、文化产业上市资方、中视金桥、南京市政府基金，庚辛资本担任长期独家财务顾问。")
