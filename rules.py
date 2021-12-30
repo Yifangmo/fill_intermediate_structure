@@ -336,3 +336,25 @@ class Rule20(SuperRule):
             mr += super().construct(entities_sent, is_leading_investor, attr_handler=f)
         return mr
 
+class Rule21(SuperRule):
+    def __init__(self):
+        super().__init__()
+        # 投资方为云九资本、红杉资本中国、前海母基金、磐晟资产、义柏资本（财务顾问）
+        self.pattern = "".join([self.single_rp_pattern[0], "（", self.attr_noun_pattern[0], "）"])
+        self.reobj = re.compile(self.pattern)
+        self.attr_reobjs2field_name = {
+            re.compile(r"财务顾问|融资顾问"): "finacial_advisers"
+        }
+        self.field_name2tag_name = {
+            "attr_noun": self.attr_noun_pattern[1]
+        }
+    def __call__(self, entities_sent: str, attr_noun_dict: dict):
+        mr = []
+        for attr_reobj, field_name in self.attr_reobjs2field_name.items():
+            self.field_name2tag_name[field_name] = self.single_rp_pattern[1]
+            def f(m):
+                sr = attr_reobj.search(attr_noun_dict[m.span(self.attr_noun_pattern[1])])
+                return [(field_name, sr), ("attr_noun", sr)]
+            mr += super().construct(entities_sent, attr_handler=f)
+        return mr
+

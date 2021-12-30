@@ -7,46 +7,6 @@ import re
 import rules
 import inspect
 
-
-LABEL_ER = ("(<关联方>)", 5)
-LABEL_AM = ("(<金额>)", 4)
-LABEL_ATTR = ("(<属性名词>)", 6)
-LABEL_OT = ("(<发生时间>)", 6)
-LABEL_PT = ("(<披露时间>)", 6)
-LABEL_DT = ("(<交易类型>)", 6)
-LABEL_FL = ("(<融资方标签>)", 7)
-
-WILDCARD = "[^，]*"
-
-LABEL_STR_MAP = {
-    "关联方": LABEL_ER,
-    "金额": LABEL_AM,
-    "属性名词": LABEL_ATTR,
-    "发生时间": LABEL_OT,
-    "披露时间": LABEL_PT,
-    "交易类型": LABEL_DT,
-    "融资方标签": LABEL_FL
-}
-
-
-class MyJSONEncoder(json.JSONEncoder):
-    
-  def iterencode(self, o, _one_shot=False):
-    list_lvl = 0
-    for s in super(MyJSONEncoder, self).iterencode(o, _one_shot=_one_shot):
-      if s.startswith("["):
-        list_lvl += 1
-        s = s.replace("\n", "").rstrip()
-      elif 0 < list_lvl:
-        s = s.replace("\n", "").rstrip()
-        if s and s[-1] == ",":
-          s = s[:-1] + self.item_separator
-        elif s and s[-1] == ":":
-          s = s[:-1] + self.key_separator
-      if s.endswith("]"):
-        list_lvl -= 1
-      yield s
-
 def get_ner_predict(sent):
     """
     Args:
@@ -58,21 +18,19 @@ def get_ner_predict(sent):
     res = json.loads(r.text)
     return res
 
-def get_field_value(sent: str, entities_index2original: dict, span: tuple):
-    # if span not in entities_index2original:
-    #     print("get_field_value 实体索引映射错误：({},{})".format(span[0], span[1]))
-    #     return
-    sent_idx_span = entities_index2original[span]
-    return sent[sent_idx_span[0]: sent_idx_span[1]]
-
-def get_field_values(sent: str, entities_index2original: dict, spans: list):
-    res = []
-    for sp in spans:
-        # if sp not in entities_index2original:
-        #     print("get_field_values 实体索引映射错误：({},{})".format(sp[0], sp[1]))
-        #     continue
-        sent_idx_span = entities_index2original[sp]
-        res.append(sent[sent_idx_span[0]:sent_idx_span[1]])
+def get_field_value(sent: str, entities_index2original: dict, span):
+    res = None
+    if isinstance(span, list):
+        res = []
+        for sp in span:
+            # if sp not in entities_index2original:
+            #     print("get_field_values 实体索引映射错误：({},{})".format(sp[0], sp[1]))
+            #     continue
+            sent_idx_span = entities_index2original[sp]
+            res.append(sent[sent_idx_span[0]:sent_idx_span[1]])
+    else:
+        sent_idx_span = entities_index2original[span]
+        res = sent[sent_idx_span[0]: sent_idx_span[1]]
     return res
 
 def get_classified_alias(alias: set):
@@ -95,12 +53,8 @@ def get_classified_alias(alias: set):
         names["full_name"] = sorted(full_names, key=lambda n: (len(n), n), reverse=True)[0]
     return names
 
-# 获取某个分句的位置
+# 获取某个子句的位置
 def get_clause_span(sent: str, token_low_index: int, token_high_index: int, unique_sep:str = None, *additional_seps: str):
-    # print("sent: ", sent)
-    # print("token_low_index: ", token_low_index)
-    # print("token_high_index: ", token_high_index)
-    # print("unique_sep: ", unique_sep)
     separators = ["；", "，", "。", "】", "【"]
     if unique_sep:
         separators = [unique_sep]
@@ -119,10 +73,9 @@ def get_clause_span(sent: str, token_low_index: int, token_high_index: int, uniq
             break
     begin = begin if begin else 0
     end = end if end else l
-    # print("begin: ", begin)
-    # print("end: ", end)
     return begin, end
 
+# 为出现交易类型的子句划分索引范围，子句间的分隔符是标点符号。返回的是某个子句在整个句子中的索引范围到该子句所含交易类型的映射。
 def divide_real_dts_span(sent: str, idxspan2real_dts: dict, real_dt2label_dts: dict, separators: list):
     if len(separators) == 0:
         return idxspan2real_dts
@@ -150,14 +103,30 @@ def normalize_sentence(sent: str):
             if m.group(i):
                 return dic[i]
     # 处理标题的空格
-    if not sent.endswith("。") or sent.endswith("？"):
+    # if not sent.endswith("。") or sent.endswith(("？", "！")):
         # sent = re.sub(r"(?<![A-Za-z])\s(?![A-Za-z])", "，", sent)
-        pass
+        # pass
     return re.sub(r"((?<![A-Za-z])\s|\s(?![A-Za-z])|“|”|「|」|‘|’)|(,)|(;)|(:)|(\()|(\))|(<)|(>)", repl, sent)
 
 
 class EntitiesDictExtrator(object):
     def __init__(self, *rules):
+        self.label_related_party = "关联方"
+        self.label_related_amount = "金额"
+        self.label_related_attr_nount = "属性名词"
+        self.label_related_occ_date = "发生时间"
+        self.label_related_dcs_date = "披露时间"
+        self.label_related_deal_type = "交易类型"
+        self.label_related_business_prof = "融资方标签"
+        self.label_str_map = {
+            "关联方": "<关联方>",
+            "金额": "<金额>",
+            "属性名词": "<属性名词>",
+            "发生时间": "<发生时间>",
+            "披露时间": "<披露时间>",
+            "交易类型": "<交易类型>",
+            "融资方标签": "<融资方标签>"
+        }
         self.validate_deal_type_reobj = re.compile(
             (
                 r"(((pre-)?[A-H]\d?(\++|＋+|plus)?)|天使|种子|战略|新一|IPO)(轮|系列轮|系列(?!轮))((?![融投]资|投融资)|([融投]资|投融资)(?!人|者|方|机构))|"
@@ -195,7 +164,6 @@ class EntitiesDictExtrator(object):
                         pre_repl_dt = label_dt2repl_dt[pre_li_span]
                         # 新一轮2000万美元B轮融资
                         if re.search(r"[A-Za-z]", repl_dt):
-                            print("-------------------------")
                             # 将原有的 新一 替换为 B
                             label_dt2repl_dt[(li[0],li[1])] = repl_dt
                             label_dt2repl_dt[pre_li_span] = repl_dt
@@ -248,7 +216,6 @@ class EntitiesDictExtrator(object):
         
         if len(real_dt2label_dts) > 0:
             print("sent: ", sent)
-            print("labels_indexes: ", labels_indexes)
             print("real_dt2label_dts: ", real_dt2label_dts)
             separators = ["；", "，", "、"]
             # 划分span为尽可能小单位，以尽可能使得每个span最多只有一个real_dt，最小的单位为"、"分割的短句的span
@@ -440,15 +407,14 @@ class EntitiesDictExtrator(object):
                 pass
             if label[1] >= span_start and i > 0 and labels_indexes[i - 1][1] < span_start:
                 span_start_diff = idx_diff
-                print("span_start_diff: ", span_start_diff)
             # 生成标签索引映射
             label_start_idx = label[0]+idx_diff
-            label_length = LABEL_STR_MAP[label[2]][1]
+            label_length = len(self.label_str_map[label[2]])
             entities_index2original[(label_start_idx, label_start_idx + label_length)] = (label[0], label[1])
             original_index2entities[(label[0], label[1])] = (label_start_idx, label_start_idx + label_length)
             idx_diff += (label_length - (label[1] - label[0]))
             # 替换为标签
-            replaced_list.append("<"+label[2]+">")
+            replaced_list.append(self.label_str_map[label[2]])
             start = label[1]
             
             # 生成属性名词span到origin str的dict
@@ -466,8 +432,9 @@ class EntitiesDictExtrator(object):
                 alias[er] = {er}
                 if start < len(sent) and sent[start] == "（":
                     end = sent.find("）", start)
-                    # 排除一些情况，包括有标签<>的
-                    if end == -1 or re.search("<|隶属|领投|估值|股票代码", sent[start+1:end]):
+                    # 排除一些情况，包括括号内有实体的情况
+                    if end == -1 or re.search("隶属|领投|估值|股票代码", sent[start+1:end]) or\
+                        (i + 1) < len(labels_indexes) and labels_indexes[i+1][1] <= end:
                         continue
                     alias_reobj = re.compile(r"(?:简称|英文名|下称)：?")
                     m = alias_reobj.search(sent, start+1, end)
@@ -550,7 +517,6 @@ class EntitiesDictExtrator(object):
             mr_struct = mr["struct"]
             mr_span = mr["match_span"]
             for span, real_dts in idxspan2real_dts.items():
-                # print(mr_span, entities_sent[mr_span[0]:mr_span[1]])
                 if span[0] <= mr_span[0] and mr_span[1] <= span[1]:
                     # TODO if len(real_dts) == 0 的情况
                     for real_dt in real_dts:
@@ -587,7 +553,7 @@ class EntitiesDictExtrator(object):
                                     total_labels_used.update(v)
                                     investors = []
                                     is_leading_investor = mr_struct["is_leading_investor"] if "is_leading_investor" in mr_struct else False
-                                    i_names = get_field_values(sent, entities_index2original, v)
+                                    i_names = get_field_value(sent, entities_index2original, v)
                                     for i_name in i_names:
                                         investor = {}
                                         names = get_classified_alias(alias[i_name])
@@ -598,7 +564,7 @@ class EntitiesDictExtrator(object):
                                     nmr_struct["investors"] = investors
                                 elif k == "finacial_advisers":
                                     total_labels_used.update(v)
-                                    finacial_advisers = get_field_values(sent, entities_index2original, v)
+                                    finacial_advisers = get_field_value(sent, entities_index2original, v)
                                     nmr_struct["finacial_advisers"] = finacial_advisers
                         new_match_result.append(nmr)
                         
@@ -644,11 +610,8 @@ class EntitiesDictExtrator(object):
         for func in self.rules:
             match_result += func(entities_sent, attr_noun_dict)
         sentence_struct_info["match_result"] = match_result
-        
-        print("match_result： ", sentence_struct_info["match_result"])
-        print()
-
+        print("match_result: ", match_result)
         self.adjust_field(sentence_struct_info)
         return sentence_struct_info
 
-ede = EntitiesDictExtrator(*[i[1]() for i in inspect.getmembers(rules, inspect.isclass) if i[0].startswith("Rule")])
+EDE = EntitiesDictExtrator(*[i[1]() for i in inspect.getmembers(rules, inspect.isclass) if i[0].startswith("Rule")])

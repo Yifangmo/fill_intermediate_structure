@@ -1,4 +1,4 @@
-from merge_engine import MergeEngine, MAX_LENGTH_FILTER, SAVE_ALL_FILTER
+from merge_engine import MergeEngine, MAX_LENGTH_FILTER, SAVE_ALL_FILTER, KeyWrapper
 import re
 
 class Merger():
@@ -13,10 +13,12 @@ class Merger():
         self.is_leading_investor_filter = lambda s : True in s
         self.full_name_filter = MAX_LENGTH_FILTER
         self.deal_size = SAVE_ALL_FILTER
+        self.business_profile = SAVE_ALL_FILTER
         self.filters_dict={
             'investors.is_leading_investor': self.is_leading_investor_filter,
             'financing_company.full_name': self.full_name_filter,
             'investors.full_name': self.full_name_filter,
+            'business_profile': self.business_profile,
             'deal_size': self.deal_size
         }
         self.mergeengine = MergeEngine()
@@ -24,7 +26,6 @@ class Merger():
     
     def __call__(self, match_result: list):
         match_result = self.merge_deal_type(match_result)
-        print(match_result)
         merge_result = self.mergeengine(match_result, self.keys, self.filters_dict)
         return merge_result
 
@@ -74,7 +75,6 @@ class Merger():
                     else:
                         repl_dt_map[repl_dt] = dt
                         deal_type2match_result[dt] = [mr]
-        print(list(deal_type2match_result.keys()))
         
         # 尝试将引用交易类型转为实际交易类型
         for dt, mrs in refer_deal_type2match_result.items():
@@ -108,9 +108,9 @@ class Merger():
             res += mr
         return res
 
-class PrimaryNameWrapper(str):
+class PrimaryNameWrapper(KeyWrapper):
     def __init__(self, value: str):
-        self.value = value
+        super().__init__(value)
         
     def __eq__(self, __o: object):
         if self.value == __o.value:
@@ -124,5 +124,17 @@ class PrimaryNameWrapper(str):
     def __hash__(self) -> int:
         return 0
     
-    def __str__(self) -> str:
-        return self.value
+    
+    def __lt__(self, __x: str) -> bool:
+        sv = self.value
+        xv = __x.value
+        if len(sv) < len(xv):
+            return False
+        elif len(sv) > len(xv):
+            return True
+        else:
+            if sv.isupper():
+                return True
+            if xv.isupper():
+                return False
+        return True

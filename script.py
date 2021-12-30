@@ -141,7 +141,7 @@ def get_final_result():
                 
                 obj = None
                 try:
-                    obj = extrator.ede(sent)
+                    obj = extrator.EDE(sent)
                 except BaseException as e:
                     errf.write(traceback.format_exc()+'\n'+sent+'\n')
                 if not obj:

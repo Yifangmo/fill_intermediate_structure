@@ -5,8 +5,9 @@ class SuperRule(object):
     def __init__(self):
         self.financing_company_pattern = (r"(?:(?P<bp><融资方标签>)?(?P<fc><关联方>))", "bp", "fc")
         self.full_financing_company_pattern = (r"(?:(?P<bp><融资方标签>)(?P<fc><关联方>))", "bp", "fc")
-        self.investors_pattern = (r"(?P<i>(?:(?:<属性名词>的?)?(?:<关联方>)(?:、|和|以?及)?)+)等?(?:机构|基金|则?(?:以|作为)?(?:<属性名词>))?", "i")
+        self.investors_pattern = (r"(?P<i>(?:(?:<属性名词>的?)?(?:<关联方>)(?:（<属性名词>）)?(?:、|和|以?及)?)+)等?(?:机构|基金|则?(?:以|作为)?(?:<属性名词>))?", "i")
         self.may_be_deal_size_pattern = (r"(?P<ds><金额>)?", "ds")
+        self.single_rp_pattern = (r"(?P<rp><关联方>)?", "rp")
         self.deal_size_pattern = (r"(?P<ds><金额>)", "ds")
         self.may_be_deal_type_pattern = r"(?:<交易类型>)?"
         self.deal_type_pattern = r"<交易类型>"
@@ -24,6 +25,9 @@ class SuperRule(object):
                 res = attr_handler(m)
                 for r in res:
                     if r[1]:
+                        print(m)
+                        print(self.field_name2tag_name[r[0]])
+                        print(r[0])
                         sp = m.span(self.field_name2tag_name[r[0]])
                         if sp != (-1,-1):
                             if r[0] == "investors":

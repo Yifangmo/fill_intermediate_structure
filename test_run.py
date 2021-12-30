@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-from extrator import ede
+from extrator import EDE
 from merger import Merger
 import rules
 from typing import *
@@ -14,14 +14,15 @@ def test_rule(rule, result):
 def test_merge():
     merger = Merger()
     sents = [
-        "美国大学生金融援助平台CampusLogic完成1.2亿美元融资",
-        "鲸媒体讯（文/吱吱）日前，美国大学生金融援助平台CampusLogic获得1.2亿美元融资，投资方为Dragoneer投资集团。",
-        "据悉，这是CampusLogic自2011年成立以来获得的最大一笔融资。",
-        "截至目前，CampusLogic的融资总额达到1.928亿美元。",
+        "有消息称燕文物流已完成B轮数亿元融资",
+        "11月30日消息，亿邦动力网获悉，据原色咨询公开的信息，跨境电商物流服务企业燕文物流日前完成数亿元新一轮人民币融资。",
+        "而燕文物流本轮投资由顶级投资机构君联资本领投，毅达资本等其他投资机构共同出资完成。",
+        "其中，原色咨询在本次融资交易中担任燕文物流的独家财务顾问。",
+        "针对这个融资消息，有相关人士向亿邦动力网透露，在此前，燕文跟投资方确实准备签署投资协议，但目前并不知道资金是否到账。",
     ]
     strus = []
     for s in sents:
-        obj = ede(s)
+        obj = EDE(s)
         # print(obj)
         for mr in obj["match_result"]:
             strus.append(mr["struct"])
@@ -30,64 +31,19 @@ def test_merge():
     pass
 
 def test_gen():
-    obj = ede("genapsys Inc.（genapsys），今天宣布已在D轮股权融资中筹集7000万美元。")
+    # obj = ede("genapsys Inc.（genapsys），今天宣布已在D轮股权融资中筹集7000万美元。")
+    obj = EDE("11月30日消息，亿邦动力网获悉，据原色咨询公开的信息，跨境电商物流服务企业燕文物流日前完成数亿元新一轮人民币融资。")
     # print("original_index2entities: ", obj["original_index2entities"])
     # print()
     # del obj["original_index2entities"]
     print(obj)
-    test_rule(rules.Rule4, obj)
-    pass
-
-KT = TypeVar('KT', List[str], dict)
-
-class wrapper(str):
-    def __init__(self, value: str):
-        self.value = value
-        
-    def __eq__(self, __o: object):
-        if self.value == __o.value:
-            return True
-        v1 = self.value.upper()
-        v2 = __o.value.upper()
-        if v1.find(v2) != -1 or v2.find(v1) != -1:
-            return True
-        return False
-    
-    def __hash__(self) -> int:
-        return 0
-    
-    def __str__(self) -> str:
-        return self.value
-
-def test1():
-    w1 = wrapper("IDG资本")
-    w2 = wrapper("idg资本")
-    s = {}
-    s[w1] = 1
-    s[w2] = 2
-    for k in s:
-        print(k)
-
-def test2(k: KT):
-    if isinstance(k, (List, int)):
-        print(True)
-    pass
-
-class A:
-    def __eq__(self, __o: object) -> bool:
-        pass
-    def __hash__(self) -> int:
-        return 0
+    # test_rule(rules.Rule18, obj)
     pass
 
 if __name__ == "__main__":
-    # test_gen()
+    test_gen()
     # test_merge()
     # test1()
-    a = A()
-    # b = {a:1}
-    print(isinstance(A, Hashable))
-    pass
     
     # 多分句共用关联方
     # obj = call("9月1日消息，近日，教育机器人及STEAM玩教具公司LANDZO蓝宙科技宣布，公司已于6月完成A轮1.89亿元融资，投资方为至临资本、文化产业上市资方、中视金桥、南京市政府基金，庚辛资本担任长期独家财务顾问。")

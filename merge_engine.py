@@ -25,12 +25,8 @@ class MergeEngine(object):
             filters_dict ([type]): 一个字段名到筛选器函数的字典，当非键字段出现多值时需调用筛选器函数，若指定字段的筛选器为None，则用默认的筛选器
         Raises:
             TypeError: 列表中的元素类型不支持
-        """
-        
-        if not isinstance(arg, list):
-            return arg
-        
-        if len(arg) == 0:
+        """     
+        if not arg:
             return None
         
         if isinstance(keys, list):
@@ -54,6 +50,8 @@ class MergeEngine(object):
         return res
 
     def handle(self, arg: list, keys: List[str], filters_dict: dict, current_field: str):
+        if len(arg) == 0:
+            return None
         element_type = None
         current_keys = None
         if current_field:
@@ -67,21 +65,21 @@ class MergeEngine(object):
                 raise TypeError("list element's type is not unified: {}, {}".format(element_type, type(ele)))
         if element_type in self.simple_type:
             res_dict = set({})
-            new_arg = []
-            ck = current_keys[current_field]
-            k_wrapper = keys[ck]
+            eles = []
             for ele in arg:
-                wrapper_ele = k_wrapper(ele) if k_wrapper else ele
-                if wrapper_ele not in res_dict:
-                    new_arg.append(ele)
-                    res_dict.add(wrapper_ele)
+                if ele not in res_dict:
+                    eles.append(ele)
+                    res_dict.add(ele)
             if len(res_dict) > 1:
-                if current_field in filters_dict:
-                    res = filters_dict[current_field](new_arg)
+                if current_field in keys and keys[current_field]:
+                    res = sorted([keys[current_field](ele) for ele in eles])[0].value
+                elif current_field in filters_dict:
+                    res = filters_dict[current_field](eles)
                 else:
-                    res = self.default_filter(new_arg)
+                    res = self.default_filter(eles)
             else:
-                res = arg.pop()
+                res = eles[0]
+                
         elif element_type == list:
             lst = []
             isHashable = True
@@ -108,7 +106,7 @@ class MergeEngine(object):
                 for k, ck in current_keys.items():
                     if ck in ele:
                         # 如果当前关键字的值是可哈希的或者有可hash的包装类，就加入到关键字值有序数列中
-                        k_wrapper = keys[ck]
+                        k_wrapper = keys[k]
                         if isinstance(ele[ck], Hashable) or k_wrapper:
                             kvalue = k_wrapper(ele[ck]) if k_wrapper else ele[ck]
                             kvalues.append(kvalue)
@@ -140,3 +138,19 @@ class MergeEngine(object):
         else:
             raise TypeError("type is not supported: {}".format(element_type))
         return res
+
+class KeyWrapper(str):
+    def __init__(self, value) -> None:
+        self.value = value
+    
+    def __str__(self) -> str:
+        return self.value
+    
+    def __eq__(self, __x: object) -> bool:
+        return self.value == __x.value
+    
+    def __hash__(self) -> int:
+        return super().__hash__()
+    
+    def __lt__(self, __x: str) -> bool:
+        return super().__lt__(__x)
