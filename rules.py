@@ -261,7 +261,7 @@ class Rule18(SuperRule):
     def __init__(self):
         super().__init__()
         # (r"(<属性名词>)还?(?:主要)?(?:为|是|有|囊括|包括|涉及|包?含)((?:(?:<属性名词>的?)?(?:<关联方>)(?:、|和|以?及)?)+)",
-        self.pattern = "".join([self.attr_noun_pattern[0], r"还?(?:主要)?(?:为|是|有|囊括|包括|涉及|包?含)",self.investors_pattern[0]])
+        self.pattern = "".join([self.attr_noun_pattern[0], r"(?:还?(?:主要)?(?:为|是|有|囊括|包括|涉及|包?含)|，)",self.investors_pattern[0]])
         self.reobj = re.compile(self.pattern)
         self.attr_reobjs2field_name = {
             re.compile(r"投资方|投资人|投资者|投资机构|参投|跟投"): "investors",
@@ -358,3 +358,16 @@ class Rule21(SuperRule):
             mr += super().construct(entities_sent, attr_handler=f)
         return mr
 
+class Rule22(SuperRule):
+    def __init__(self):
+        super().__init__()
+        self.pattern = "".join([self.financing_company_pattern[0], self.anychar_notag_pattern, r"获得?", self.investors_pattern[0], self.anychar_pattern, r"投资"])
+        self.reobj = re.compile(self.pattern)
+        self.field_name2tag_name = {
+            "business_profile": self.financing_company_pattern[1], 
+            "financing_company": self.financing_company_pattern[2], 
+            "investors": self.investors_pattern[1],
+        }
+        
+    def __call__(self, entities_sent: str, attr_noun_dict: dict):
+        return self.construct(entities_sent)

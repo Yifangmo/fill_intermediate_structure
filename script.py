@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 from os import write
+from merger import Merger
 import csv
 import extrator
 import traceback
@@ -91,6 +92,7 @@ def get_invalid_deal_type():
 
 def get_final_result():
     with open("./input/sample.csv", 'r') as inf , open("./output/err.log", 'w+') as errf:
+        merger = Merger()
         wb = xlsxwriter.Workbook("./output/test_result1.xlsx")
         sh1 = wb.add_worksheet()
         sh2 = wb.add_worksheet()
@@ -180,7 +182,7 @@ def get_final_result():
                     sh2_row_cnt += 1
             merged_result = None
             try: 
-                merged_result = extrator.mergenews(news_structs)
+                merged_result = merger(news_structs)
             except:
                 errf.write(traceback.format_exc()+valid_sentences+'\n\n')
             else:
@@ -320,4 +322,5 @@ def get_multi_deal_type():
 if __name__ == "__main__":
     # tag_statistic("交易类型")
     # tag_statistic("属性名词")
-    get_invalid_deal_type()
+    # get_invalid_deal_type()
+    get_final_result()

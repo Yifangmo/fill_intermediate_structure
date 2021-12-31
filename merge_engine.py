@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-from typing import Hashable, List, TypeVar
+from typing import Hashable, Iterable, List
 
 MAX_FILTER = lambda i:sorted(i, reverse=True)[0]
 MIN_FILTER = lambda i:sorted(i)[0]
@@ -8,27 +8,48 @@ MIN_LENGTH_FILTER = lambda s : sorted(s, key=lambda i:len(i))[0]
 SAVE_ALL_FILTER = lambda s : list(s)
 FILED_SEPERATOR = "."
 
-KT = TypeVar('KT', List[str], dict)
+class KeyWrapper(str):
+    def __init__(self, value) -> None:
+        self.value = value
+    
+    def __str__(self) -> str:
+        return self.value
+    
+    def __eq__(self, __x: object) -> bool:
+        return self.value == __x.value
+    
+    def __hash__(self) -> int:
+        return super().__hash__()
+    
+    def __lt__(self, __x: str) -> bool:
+        return super().__lt__(__x)
 
 class MergeEngine(object):
+    """[融合具有相同结构的嵌套结构体，需要为结构体和子结构体指定关键字字段(需要时可指定其包装类)，其他非关键字段可选地指定过滤器]
+    """
     def __init__(self):
         self.simple_type = {str, int, float, bool}
         self.default_filter = MAX_FILTER
         self.seperator = FILED_SEPERATOR
     
-    def __call__(self, arg, keys: KT, filters_dict: dict):
-        
-        """递归处理合并列表操作
+    def handle(self, arg: Iterable, keys: 'List[str]|dict[str, KeyWrapper]', filters: dict=None):
+        """[可调用的]
+
         Args:
-            arg (list): 待合并的列表
-            keys (List[str], dict): 指明哪些字段为键，这些字段不需要筛选
-            filters_dict ([type]): 一个字段名到筛选器函数的字典，当非键字段出现多值时需调用筛选器函数，若指定字段的筛选器为None，则用默认的筛选器
+            arg ([type]): [具有相同结构的结构体列表]
+            keys (List[str]|dict[str, KeyWrapper): [指定关键字，以之为轴来融合多个嵌套结构体，也可以指定关键字的同时指定其包装类，这样就可以自定义哪些关键字的值是同一个值，包装类需要继承KeyWrapper，通过重写__eq__方法来实现特定功能，重写__lt__方法来制定规则选取想要的关键字的值]
+            filters (dict): [非关键字到过滤器函数的字典，用于自定义多个非关键字的融合结果，默认的过滤器是选自然排序后的最大值]
+
         Raises:
-            TypeError: 列表中的元素类型不支持
-        """     
+            TypeError: [结构体某些字段类型不符合规则]
+
+        Returns:
+            [type]: [融合后的结构体列表，若结果为1个则返回该结构体而非列表]
+        """
+  
         if not arg:
             return None
-        
+        filters = {} if not filters else filters
         if isinstance(keys, list):
             for k in keys:
                 if not isinstance(k, str):
@@ -38,32 +59,30 @@ class MergeEngine(object):
             for key, wrapper in keys.items():
                 if not isinstance(key, str):
                     raise TypeError("key's type must be str: {}".format(type(key)))
-                if wrapper and not isinstance(wrapper(None), Hashable):
+                if wrapper and not issubclass(wrapper, KeyWrapper):
                     raise TypeError("The key's wrapper should be Hashable: {}".format(key))
         else:
             raise TypeError("the type of keys must be dict or list: {}".format(type(keys)))
         res = None
         if isinstance(arg, list):
-            res = self.handle(arg, keys, filters_dict, None)
+            res = self.__handle(arg, keys, filters, None)
         else:
-            res = self.handle([arg], keys, filters_dict, None)
+            res = self.__handle([arg], keys, filters, None)
         return res
 
-    def handle(self, arg: list, keys: List[str], filters_dict: dict, current_field: str):
+    def __handle(self, arg: list, keys: List[str], filters: dict, current_field: str):
         if len(arg) == 0:
             return None
-        element_type = None
         current_keys = None
         if current_field:
             current_keys = {k:k.replace(current_field+self.seperator, '', 1) for k in keys if k.startswith(current_field+self.seperator)}
         else:
             current_keys = {k:k for k in keys if self.seperator not in k}
+        element_type = type(arg[0])
         for ele in arg:
-            if not element_type:
-                element_type = type(ele)
-            elif element_type != type(ele):
+            if element_type != type(ele):
                 raise TypeError("list element's type is not unified: {}, {}".format(element_type, type(ele)))
-        if element_type in self.simple_type:
+        if isinstance(arg[0], Hashable):
             res_dict = set({})
             eles = []
             for ele in arg:
@@ -73,8 +92,8 @@ class MergeEngine(object):
             if len(res_dict) > 1:
                 if current_field in keys and keys[current_field]:
                     res = sorted([keys[current_field](ele) for ele in eles])[0].value
-                elif current_field in filters_dict:
-                    res = filters_dict[current_field](eles)
+                elif current_field in filters:
+                    res = filters[current_field](eles)
                 else:
                     res = self.default_filter(eles)
             else:
@@ -88,7 +107,7 @@ class MergeEngine(object):
                     if not isinstance(i, Hashable):
                         isHashable = False
                 lst += li
-            res = list(set(lst)) if isHashable else self.handle(lst, keys, filters_dict, current_field)
+            res = list(set(lst)) if isHashable else self.__handle(lst, keys, filters, current_field)
             pass
         elif element_type == dict:
             res = []
@@ -111,7 +130,7 @@ class MergeEngine(object):
                             kvalue = k_wrapper(ele[ck]) if k_wrapper else ele[ck]
                             kvalues.append(kvalue)
                         else:
-                            raise TypeError("key's value must be hashable or have hashable wrapper: {}".format(k))
+                            raise TypeError("key's value must be hashable or must have hashable wrapper: {}".format(k))
                     else:
                         kvalues.append(None)
                 kvalues_tup = tuple(kvalues)
@@ -132,25 +151,10 @@ class MergeEngine(object):
                             res_dict[k].append(v)
                 for k, v in res_dict.items():
                     field = self.seperator.join([current_field, k]) if current_field else k
-                    res_dict[k] = self.handle(v, keys, filters_dict, field)
+                    res_dict[k] = self.__handle(v, keys, filters, field)
                 res.append(res_dict)
             res = res if len(res) != 1 else res[0]
         else:
             raise TypeError("type is not supported: {}".format(element_type))
         return res
 
-class KeyWrapper(str):
-    def __init__(self, value) -> None:
-        self.value = value
-    
-    def __str__(self) -> str:
-        return self.value
-    
-    def __eq__(self, __x: object) -> bool:
-        return self.value == __x.value
-    
-    def __hash__(self) -> int:
-        return super().__hash__()
-    
-    def __lt__(self, __x: str) -> bool:
-        return super().__lt__(__x)

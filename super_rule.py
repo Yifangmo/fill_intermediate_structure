@@ -25,9 +25,6 @@ class SuperRule(object):
                 res = attr_handler(m)
                 for r in res:
                     if r[1]:
-                        print(m)
-                        print(self.field_name2tag_name[r[0]])
-                        print(r[0])
                         sp = m.span(self.field_name2tag_name[r[0]])
                         if sp != (-1,-1):
                             if r[0] == "investors":

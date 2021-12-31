@@ -26,7 +26,7 @@ class Merger():
     
     def __call__(self, match_result: list):
         match_result = self.merge_deal_type(match_result)
-        merge_result = self.mergeengine(match_result, self.keys, self.filters_dict)
+        merge_result = self.mergeengine.handle(match_result, self.keys, self.filters_dict)
         return merge_result
 
     def merge_deal_type(self, match_result: list):
@@ -75,7 +75,6 @@ class Merger():
                     else:
                         repl_dt_map[repl_dt] = dt
                         deal_type2match_result[dt] = [mr]
-        
         # 尝试将引用交易类型转为实际交易类型
         for dt, mrs in refer_deal_type2match_result.items():
             for mr in mrs:
@@ -84,18 +83,12 @@ class Merger():
                     tmp_dt = list(deal_type2match_result.keys())[0]
                 # 找出与之最近的并且在前面的real_dt
                 else:
-                    try:
+                    if mr in match_result:
                         mpos = match_result.index(mr)
-                    except:
-                        continue
-                    else:
                         pos_diff = 100
                         for dt, omr in deal_type2match_result.items():
-                            try:
+                            if mr in match_result:
                                 mpos = match_result.index(mr)
-                            except:
-                                continue
-                            else:
                                 opos = match_result.index(omr[0])
                                 pd = (mpos - opos)
                                 if pd <= pos_diff and pd >= 0:
